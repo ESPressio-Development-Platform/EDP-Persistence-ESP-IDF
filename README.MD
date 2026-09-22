@@ -4,8 +4,8 @@ Concrete ESP-IDF providers for the EDP-Persistence contract.
 
 ## Providers
 
-- `VfsFileStorage<TBindingTag>` adapts an already-mounted ESP-IDF VFS base path to hierarchical `FileStorage`. Bootstrap owns mounting/unmounting. Directory mutation/enumeration, rename, append and bounded write-at are supported.
-- `NvsKeyValueStorage<TBindingTag>` adapts one NVS partition/namespace to `KeyValueStorage`. Keys are limited to 15 UTF-8 bytes and values to 512 bytes. Mutations explicitly call `nvs_commit()` before reporting success.
+- `VfsFileStorage<TBindingTag, TBindingProfile>` adapts an already-mounted hierarchical ESP-IDF VFS base path to `FileStorage`. The binding profile explicitly declares retention, path case sensitivity, media removability, path/segment limits, and maximum file size. This provider is intentionally not a universal claim about every VFS backend: use it only when the mounted filesystem actually supplies the advertised hierarchical directory, rename, append, and bounded write-at operations.
+- `NvsKeyValueStorage<TBindingTag>` adapts one initialized NVS partition/namespace to `KeyValueStorage`. Keys are limited to the documented 15-byte ASCII representation; valid EDP UTF-8 keys outside ASCII return `KeyNotRepresentable`. Values remain bounded to 512 bytes, including a present zero-length blob. Mutations call `nvs_commit()` before reporting success.
 
 `TBindingTag` gives independently selectable logical bindings distinct Composition provider types.
 
@@ -15,6 +15,28 @@ Concrete ESP-IDF providers for the EDP-Persistence contract.
   - EDP-Persistence
     - EDP-System
   - ESP-IDF
+
+## VFS binding profile
+
+A VFS binding profile is part of the provider type. It is a compile-time assertion about the specific mounted filesystem, not about ESP-IDF VFS in general.
+
+For example:
+
+```cpp
+using StorageProfile = ESPressio::Persistence::EspIdf::VfsBindingProfile<
+    ESPressio::Persistence::RetentionLevel::Restart,
+    ESPressio::Persistence::TextCaseSensitivity::CaseSensitive,
+    ESPressio::Persistence::MediaRemovability::Fixed,
+    255U,
+    255U,
+    0x7FFFFFFFULL
+>;
+
+using StorageProvider =
+    ESPressio::Persistence::EspIdf::VfsFileStorage<MyBinding, StorageProfile>;
+```
+
+Only select values that are true for the actual mounted VFS backend. A profile claiming `PowerLoss` means every successful mutation performed through the provider has crossed a power-loss-surviving commit boundary. For file-content writes, the provider additionally performs `fsync()` before success when `PowerLoss` is advertised; metadata durability still depends on the mounted backend's documented syscall semantics.
 
 ## Lifecycle
 
