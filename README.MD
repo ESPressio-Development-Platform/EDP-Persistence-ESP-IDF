@@ -52,6 +52,10 @@ The application initializes NVS and mounts the selected VFS implementation befor
 
 Both providers advertise `CallerSerialized`. NVS includes a bounded 512-byte scratch buffer so a caller can request a truncated blob read without dynamic allocation even though `nvs_get_blob()` requires storage for the complete blob.
 
+## Demos
+
+- [Concrete Providers](./demos/ConcreteProviders/README.MD) — exercises both FileStorage and KeyValueStorage concrete providers across the required Arduino IDE, PlatformIO Arduino, and PlatformIO ESP-IDF demo surfaces.
+
 ## Validation
 
 Concrete SDK compilation and target runtime testing belong in this repository. The abstract contract remains platform-neutral in EDP-Persistence.
