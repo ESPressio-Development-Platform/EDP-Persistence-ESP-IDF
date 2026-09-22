@@ -2,33 +2,48 @@
 
 Concrete ESP-IDF providers for the EDP-Persistence contract.
 
+This repository is the explicit ESP-IDF concrete sibling of the SDK-neutral `EDP-Persistence` repository. Its direct ESP-IDF SDK references are permitted by the domain-specific exception in `Policy/V2/ABSTRACTION.MD`.
+
 ## Providers
 
-- `VfsFileStorage<TBindingTag, TBindingProfile>` adapts an already-mounted hierarchical ESP-IDF VFS base path to `FileStorage`. The binding profile explicitly declares retention, path case sensitivity, media removability, path/segment limits, and maximum file size. This provider is intentionally not a universal claim about every VFS backend: use it only when the mounted filesystem actually supplies the advertised hierarchical directory, rename, append, and bounded write-at operations.
-- `NvsKeyValueStorage<TBindingTag>` adapts one initialized NVS partition/namespace to `KeyValueStorage`. Keys are limited to the documented 15-byte ASCII representation; valid EDP UTF-8 keys outside ASCII return `KeyNotRepresentable`. Values remain bounded to 512 bytes, including a present zero-length blob. Mutations call `nvs_commit()` before reporting success.
+- `VfsFileStorage<TBindingTag, TBindingProfile, TByteOperationsProvider>` adapts an already-mounted hierarchical ESP-IDF VFS base path to `FileStorage`.
+- `NvsKeyValueStorage<TBindingTag, TByteOperationsProvider>` adapts one initialized NVS partition/namespace to `KeyValueStorage`.
 
 `TBindingTag` gives independently selectable logical bindings distinct Composition provider types.
 
+`TByteOperationsProvider` must satisfy `EDP-Memory::ByteOperations`. The provider is supplied by Bootstrap, held non-owningly, and must outlive the Persistence provider. All raw byte copies performed by these adapters route through that Memory capability.
+
 ## Documentation
 
-- [Concrete provider contracts](./docs/PROVIDERS.MD) — provider semantics, lifecycle, ownership, memory, failure guarantees and Composition integration.
+- [Concrete provider contracts](./docs/PROVIDERS.MD) — provider semantics, lifecycle, ownership, Memory integration, ISR boundary, failure guarantees, and Composition integration.
+- [Build baseline](./docs/BUILDING.MD) — mandatory C++20 baseline, PIOArduino guidance for Arduino-facing builds, and ESP-IDF configuration.
+- [Concrete Providers demo](./demos/ConcreteProviders/README.MD) — hardware/runtime expectations and target-specific build surfaces.
 
 ## Dependencies
 
 - EDP-Persistence-ESP-IDF
-  - EDP-Persistence
-    - EDP-System
-  - ESP-IDF
+  - EDP-Persistence **[mandatory]**
+    - EDP-System **[transitive]**
+  - EDP-Memory **[mandatory]**
+    - EDP-System **[transitive]**
+    - EDP-Platform **[transitive]**
+  - ESP-IDF **[mandatory concrete SDK]**
+  - EDP-Platform-Portable **[optional: supplied tests/demos use its standard ByteOperations provider]**
 
-[Dependency graph](./DEPENDENCY_GRAPH.MD)
+A consuming application may replace EDP-Platform-Portable with any provider satisfying `EDP-Memory::ByteOperations`.
+
+See [DEPENDENCY_GRAPH.MD](./DEPENDENCY_GRAPH.MD) for the maintained dependency graph.
 
 ## VFS binding profile
 
-A VFS binding profile is part of the provider type. It is a compile-time assertion about the specific mounted filesystem, not about ESP-IDF VFS in general.
+A VFS binding profile is a compile-time assertion about the specific mounted filesystem, not about ESP-IDF VFS in general.
 
 For example:
 
 ```cpp
+using ByteOperationsProvider =
+    ESPressio::Platform::Portable::Memory::ByteOperationsProvider;
+
 using StorageProfile = ESPressio::Persistence::EspIdf::VfsBindingProfile<
     ESPressio::Persistence::RetentionLevel::Restart,
     ESPressio::Persistence::TextCaseSensitivity::CaseSensitive,
@@ -39,49 +54,52 @@ using StorageProfile = ESPressio::Persistence::EspIdf::VfsBindingProfile<
 >;
 
 using StorageProvider =
-    ESPressio::Persistence::EspIdf::VfsFileStorage<MyBinding, StorageProfile>;
+    ESPressio::Persistence::EspIdf::VfsFileStorage<
+        MyBinding,
+        StorageProfile,
+        ByteOperationsProvider
+    >;
 ```
 
-Only select values that are true for the actual mounted VFS backend. A profile claiming `PowerLoss` means every successful mutation performed through the provider has crossed a power-loss-surviving commit boundary. For file-content writes, the provider additionally performs `fsync()` before success when `PowerLoss` is advertised; metadata durability still depends on the mounted backend's documented syscall semantics.
+Only select values which are true for the mounted VFS backend. A profile claiming `PowerLoss` means every successful mutation performed through the provider has crossed a power-loss-surviving commit boundary. For file-content writes, the provider additionally performs `fsync()` before success when `PowerLoss` is advertised.
 
 ## Lifecycle
 
-The application initializes NVS and mounts the selected VFS implementation before provider use. The VFS mount must remain active for the provider's complete use lifetime. `NvsKeyValueStorage::Open()` opens an existing initialized partition/namespace and `Close()` releases its handle; that namespace is dedicated to this opaque-blob provider while it is in use. `VfsFileStorage` stores a non-owning base-path pointer whose lifetime must dominate the provider.
+The application initializes NVS and mounts the selected VFS implementation before provider use. The mount, caller-owned base-path storage, and ByteOperations provider must remain valid for the provider's complete lifetime.
+
+Construct `NvsKeyValueStorage` with the selected ByteOperations provider, then call `Open()` after NVS initialization. `Open()` returns `NvsOpenStatus::Succeeded` or `NvsOpenStatus::ProviderFailure`. Call `Close()` during teardown.
+
+The NVS namespace is dedicated to this opaque-blob provider while open.
 
 ## Concurrency and memory
 
-Both providers advertise `CallerSerialized`. NVS includes a bounded 512-byte scratch buffer so a caller can request a truncated blob read without dynamic allocation even though `nvs_get_blob()` requires storage for the complete blob.
+Both providers advertise `CallerSerialized`.
 
-## Demos
+NVS contains one bounded 512-byte scratch buffer so caller destinations may receive truncated reads without dynamic allocation even though `nvs_get_blob()` retrieves the complete blob. Truncated-copy transfer uses the injected EDP-Memory ByteOperations provider.
 
-- [Concrete Providers](./demos/ConcreteProviders/README.MD) — exercises both FileStorage and KeyValueStorage concrete providers across the required Arduino IDE, PlatformIO Arduino, and PlatformIO ESP-IDF demo surfaces.
+## ISR boundary
+
+These providers are not ISR-safe and make no ISR-safety guarantee. Do not perform VFS/POSIX, NVS, lifecycle, enumeration, read, or Persistence mutation work from an ISR. Capture only minimal ISR-local state and defer Persistence work to ordinary execution context.
+
+## Build baseline
+
+C++20 is mandatory. Pure ESP-IDF consumers compile the component as C++20; Arduino-facing builds should use PIOArduino. See [Build baseline](./docs/BUILDING.MD).
 
 ## Validation
 
-Concrete SDK compilation and target runtime testing belong in this repository. The abstract contract remains platform-neutral in EDP-Persistence.
-
-## Local contract compilation
-
-From this repository root, with sibling `EDP-Persistence` and `EDP-System` checkouts present, run:
+From the repository root, with sibling `EDP-Persistence`, `EDP-Memory`, `EDP-Platform`, `EDP-Platform-Portable`, and `EDP-System` checkouts present:
 
 ```bash
 python3 tests/run_tests.py
 ```
 
-The runner performs four validation stages: it compiles and executes `tests/ProviderBehaviorTests.cpp` on the host against a bounded NVS test double and the host POSIX filesystem, source-compiles both PlatformIO demo translation units against bounded platform stubs, then compiles `tests/ContractCompile.cpp` against the real ESP-IDF SDK declarations and real sibling EDP contract repositories. The behavior tests exercise adapter-owned semantics including truncation, size limits, append/write-at, key representability, present zero-length values, and clear/remove behavior. The demo-source stages deliberately bypass PlatformIO package orchestration so C++/provider API validation remains available even when the local PlatformIO package manager is unhealthy. Use `--host-compiler` to override the host compiler.
+The runner validates:
 
-ESP-IDF discovery is deliberately self-contained. The runner checks an explicit `--idf-path`, `IDF_PATH`, an explicit `--idf-py`, `idf.py` already on `PATH`, conventional `~/esp/esp-idf` and `~/esp-idf` locations, versioned `~/esp/*/esp-idf` and `~/.espressif/*/esp-idf` installations, common development roots, and the PlatformIO `framework-espidf` package.
+1. complete concrete provider behavior/lifecycle coverage;
+2. PlatformIO Arduino demo source;
+3. PlatformIO ESP-IDF demo source;
+4. the concrete providers against a real installed ESP-IDF SDK/toolchain.
 
-A standalone ESP-IDF installation is activated through its own `export.sh` before `idf.py` is invoked. A PlatformIO-owned `framework-espidf` package is handled differently: the runner performs a compile-only probe directly with the installed Xtensa compiler and only the ESP-IDF public headers actually consumed by these providers (`nvs_flash/include` and `esp_common/include`). VFS/POSIX headers intentionally come from the Xtensa/Newlib toolchain itself. This avoids both PlatformIO package-management/upload tooling and host-only ESP-IDF compatibility headers shadowing target headers. A temporary ESP32 `sdkconfig.h` supplies only the target/compiler configuration required to parse those public SDK headers.
+For PlatformIO-owned ESP-IDF packages, the final stage uses the already-established direct target-compiler probe so local PlatformIO package-manager/upload failures do not masquerade as provider compiler failures.
 
-Missing prerequisites are reported separately so an unavailable ESP-IDF installation is not conflated with missing sibling EDP repositories.
-
-Useful diagnostic options:
-
-```bash
-python3 tests/run_tests.py --verbose
-python3 tests/run_tests.py --keep-build
-python3 tests/run_tests.py --idf-path /path/to/esp-idf
-python3 tests/run_tests.py --compiler /path/to/xtensa-compiler
-python3 tests/run_tests.py --platformio-home /path/to/.platformio
-```
+Useful explicit overrides include `--persistence`, `--memory`, `--platform`, `--platform-portable`, `--system`, `--idf-path`, `--compiler`, and `--platformio-home`.
