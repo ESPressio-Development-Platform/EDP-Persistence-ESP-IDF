@@ -5,14 +5,28 @@
 #include <nvs.h>
 
 #include <ESPressio_Persistence.hpp>
+#include <memory/ByteOperationsContract.hpp>
 
 namespace ESPressio::Persistence::EspIdf {
 
     namespace Framework = ESPressio::System::CompositionFramework;
 
 
-    /// TBindingTag distinguishes independently selectable NVS namespaces in Composition.
-    template<class TBindingTag>
+    /// Result of opening the NVS namespace owned by one provider instance.
+    enum class NvsOpenStatus : std::uint8_t {
+        Succeeded = 0U,
+        ProviderFailure = 1U
+    };
+
+
+    /// Adapts one ESP-IDF NVS namespace to the EDP KeyValueStorage contract.
+    ///
+    /// @tparam TBindingTag Distinguishes independently selectable NVS namespaces.
+    /// @tparam TByteOperationsProvider Supplies EDP-Memory raw byte-copy operations used by truncated reads.
+    template<
+        class TBindingTag,
+        class TByteOperationsProvider
+    >
     class NvsKeyValueStorage final : public Framework::Provider<
         Domain,
         Framework::Provides<
@@ -38,10 +52,19 @@ namespace ESPressio::Persistence::EspIdf {
     > {
     private:
 
-        // Bound NVS namespace.
+        static_assert(
+            TByteOperationsProvider::CompositionCapabilities::template Contains<ESPressio::Memory::ByteOperations>,
+            "ESP-IDF NvsKeyValueStorage requires an EDP-Memory ByteOperations provider"
+        );
+
+
+        // Bound dependencies.
 
         /// Open ESP-IDF NVS handle.
         nvs_handle_t Handle_;
+
+        /// Non-owning EDP-Memory byte-operation provider used for bounded raw copies.
+        const TByteOperationsProvider* ByteOperations_;
 
         /// Bounded scratch space used only when the caller requests a truncated blob read.
         mutable std::uint8_t ReadScratch_[512U];
@@ -49,6 +72,7 @@ namespace ESPressio::Persistence::EspIdf {
         /// Indicates whether Handle_ is currently open.
         bool IsReady_;
 
+        /// Result of converting an EDP key to the native NVS key representation.
         enum class KeyCopyStatus : std::uint8_t {
             Succeeded = 0U,
             TooLong = 1U,
@@ -82,18 +106,21 @@ namespace ESPressio::Persistence::EspIdf {
 
         // Lifecycle controlled by Bootstrap/application wiring.
 
-        /// Constructs an unopened NVS provider.
-        NvsKeyValueStorage() noexcept
+        /// Constructs an unopened provider using one caller-owned ByteOperations provider.
+        explicit NvsKeyValueStorage(
+            const TByteOperationsProvider& ByteOperations
+        ) noexcept
             : Handle_(0U),
+              ByteOperations_(&ByteOperations),
               IsReady_(false) {}
 
         /// Opens one caller-selected namespace in an initialized NVS partition.
-        [[nodiscard]] bool Open(
+        [[nodiscard]] NvsOpenStatus Open(
             const char* Namespace,
             const char* Partition = NVS_DEFAULT_PART_NAME
         ) noexcept {
             if (IsReady_) {
-                return true;
+                return NvsOpenStatus::Succeeded;
             }
 
             IsReady_ = nvs_open_from_partition(
@@ -102,7 +129,10 @@ namespace ESPressio::Persistence::EspIdf {
                 NVS_READWRITE,
                 &Handle_
             ) == ESP_OK;
-            return IsReady_;
+
+            return IsReady_
+                ? NvsOpenStatus::Succeeded
+                : NvsOpenStatus::ProviderFailure;
         }
 
         /// Closes the NVS handle.
@@ -239,7 +269,7 @@ namespace ESPressio::Persistence::EspIdf {
                         return {KeyValueReadStatus::IoFailure, 0U, 0U, StorageSize{}};
                     }
 
-                    std::memcpy(
+                    ByteOperations_->CopyBytes(
                         Destination.Address,
                         ReadScratch_,
                         TransferSize
