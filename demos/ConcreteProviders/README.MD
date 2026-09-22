@@ -1,6 +1,21 @@
 # Concrete Providers Demo
 
-This demo exercises both ESP-IDF concrete Persistence providers.
+This demo exercises both ESP-IDF concrete Persistence providers with an explicit EDP-Memory ByteOperations provider.
+
+The demo selects `EDP-Platform-Portable::Memory::ByteOperationsProvider` as the standard C/C++ implementation of `EDP-Memory::ByteOperations`.
+
+## Dependencies
+
+Install or provide:
+
+- EDP-Persistence-ESP-IDF;
+- EDP-Persistence;
+- EDP-Memory;
+- EDP-Platform;
+- EDP-Platform-Portable;
+- EDP-System;
+- ESP-IDF;
+- Arduino-ESP32 for the Arduino-facing targets.
 
 ## Arduino targets
 
@@ -11,9 +26,11 @@ The Arduino IDE and PlatformIO Arduino variants use:
 
 An SD card connected to the board's normal Arduino `SD` pins is required for the FileStorage portion.
 
+The PlatformIO Arduino target uses the maintained PIOArduino platform package and C++20.
+
 ## PlatformIO ESP-IDF target
 
-The ESP-IDF variant is self-contained:
+The pure ESP-IDF variant is self-contained:
 
 - a dedicated internal-flash FAT partition named `storage` is defined by `partitions.csv`;
 - FATFS is mounted at `/edpfs` with wear levelling;
@@ -23,4 +40,8 @@ The ESP-IDF variant is self-contained:
 
 The VFS binding profiles deliberately use conservative `Restart` retention. The FAT paths are declared case-insensitive. The Arduino SD profile is removable; the internal-flash ESP-IDF profile is fixed.
 
-All variants use C++20.
+See [../../docs/BUILDING.MD](../../docs/BUILDING.MD) for the exact C++20 baseline and PIOArduino guidance for Arduino-facing builds.
+
+## ISR boundary
+
+The demo deliberately performs all Persistence work from ordinary execution context. These providers are not ISR-safe and must not be called from ISR context.
