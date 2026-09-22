@@ -335,13 +335,27 @@ namespace ESPressio::Persistence::EspIdf {
                 return FileReplaceStatus::PathNotRepresentable;
             }
 
+            struct stat ExistingInformation {};
+
+            if (stat(NativePath, &ExistingInformation) == 0 && S_ISDIR(ExistingInformation.st_mode)) {
+                return FileReplaceStatus::EntryTypeConflict;
+            }
+
             auto* File = std::fopen(
                 NativePath,
                 "wb"
             );
 
             if (File == nullptr) {
-                return errno == ENOENT ? FileReplaceStatus::ParentNotFound : FileReplaceStatus::IoFailure;
+                if (errno == ENOENT) {
+                    return FileReplaceStatus::ParentNotFound;
+                }
+
+                if (errno == EISDIR) {
+                    return FileReplaceStatus::EntryTypeConflict;
+                }
+
+                return FileReplaceStatus::IoFailure;
             }
 
             const auto Written = Source.Size == 0U ? 0U : std::fwrite(
@@ -367,7 +381,19 @@ namespace ESPressio::Persistence::EspIdf {
                 return FileRemoveStatus::Succeeded;
             }
 
-            return errno == ENOENT ? FileRemoveStatus::NotFound : FileRemoveStatus::IoFailure;
+            if (errno == ENOENT) {
+                return FileRemoveStatus::NotFound;
+            }
+
+            if (errno == EISDIR || errno == EPERM) {
+                struct stat Information {};
+
+                if (stat(NativePath, &Information) == 0 && S_ISDIR(Information.st_mode)) {
+                    return FileRemoveStatus::EntryTypeConflict;
+                }
+            }
+
+            return FileRemoveStatus::IoFailure;
         }
 
         /// Creates one directory.
@@ -382,7 +408,21 @@ namespace ESPressio::Persistence::EspIdf {
                 return DirectoryCreateStatus::Succeeded;
             }
 
-            return errno == EEXIST ? DirectoryCreateStatus::AlreadyExists : DirectoryCreateStatus::IoFailure;
+            if (errno == EEXIST) {
+                struct stat Information {};
+
+                if (stat(NativePath, &Information) == 0) {
+                    return S_ISDIR(Information.st_mode)
+                        ? DirectoryCreateStatus::AlreadyExists
+                        : DirectoryCreateStatus::EntryTypeConflict;
+                }
+            }
+
+            if (errno == ENOENT) {
+                return DirectoryCreateStatus::ParentNotFound;
+            }
+
+            return DirectoryCreateStatus::IoFailure;
         }
 
         /// Removes one empty directory.
@@ -399,6 +439,10 @@ namespace ESPressio::Persistence::EspIdf {
 
             if (errno == ENOENT) {
                 return DirectoryRemoveStatus::NotFound;
+            }
+
+            if (errno == ENOTDIR) {
+                return DirectoryRemoveStatus::EntryTypeConflict;
             }
 
             return errno == ENOTEMPTY ? DirectoryRemoveStatus::NotEmpty : DirectoryRemoveStatus::IoFailure;
@@ -455,7 +499,40 @@ namespace ESPressio::Persistence::EspIdf {
                         ? static_cast<std::uint8_t>(FileEnumerationEntryFact::NameIsSmallerThanAvailableBuffer)
                         : 0U;
 
-                const auto IsDirectory = Entry->d_type == DT_DIR;
+                auto IsDirectory = Entry->d_type == DT_DIR;
+
+                if (Entry->d_type == DT_UNKNOWN) {
+                    char EntryPath[NativePathCapacity];
+                    const auto DirectoryLength = std::strlen(NativePath);
+                    const auto EntryLength = std::strlen(Entry->d_name);
+
+                    if (DirectoryLength + 1U + EntryLength + 1U > NativePathCapacity) {
+                        closedir(Handle);
+                        return {FileEnumerationStatus::IoFailure, StorageSize{Visited}};
+                    }
+
+                    std::memcpy(
+                        EntryPath,
+                        NativePath,
+                        DirectoryLength
+                    );
+                    EntryPath[DirectoryLength] = '/';
+                    std::memcpy(
+                        EntryPath + DirectoryLength + 1U,
+                        Entry->d_name,
+                        EntryLength + 1U
+                    );
+
+                    struct stat EntryInformation {};
+
+                    if (stat(EntryPath, &EntryInformation) != 0) {
+                        closedir(Handle);
+                        return {FileEnumerationStatus::IoFailure, StorageSize{Visited}};
+                    }
+
+                    IsDirectory = S_ISDIR(EntryInformation.st_mode);
+                }
+
                 StorageSize FileSize{};
 
                 const FileEnumerationEntry Observation{
@@ -503,10 +580,18 @@ namespace ESPressio::Persistence::EspIdf {
                 return FileRenameStatus::DestinationAlreadyExists;
             }
 
-            return std::rename(
+            if (std::rename(
                 NativeSource,
                 NativeDestination
-            ) == 0 ? FileRenameStatus::Succeeded : FileRenameStatus::IoFailure;
+            ) == 0) {
+                return FileRenameStatus::Succeeded;
+            }
+
+            if (errno == ENOENT) {
+                return FileRenameStatus::DestinationParentNotFound;
+            }
+
+            return FileRenameStatus::IoFailure;
         }
 
         /// Appends a complete source buffer to an existing file.
