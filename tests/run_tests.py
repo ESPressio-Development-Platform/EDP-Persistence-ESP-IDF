@@ -523,7 +523,7 @@ def main():
             str(behavior_executable),
         ]
 
-        print("\n[1/2] Compiling and running concrete provider behavior tests...")
+        print("\n[1/4] Compiling and running concrete provider behavior tests...")
 
         if args.verbose:
             print(" ".join(shlex.quote(value) for value in behavior_command))
@@ -552,7 +552,58 @@ def main():
             )
             return result.returncode
 
-        print("\n[2/2] Compiling ESP-IDF concrete contract...")
+        demo_sources = (
+            (
+                "[2/4] Compiling PlatformIO Arduino demo source...",
+                root / "demos" / "ConcreteProviders" / "PlatformIO_Arduino" / "src" / "main.cpp",
+                build / "DemoPlatformIOArduino.o",
+            ),
+            (
+                "[3/4] Compiling PlatformIO ESP-IDF demo source...",
+                root / "demos" / "ConcreteProviders" / "PlatformIO_ESP-IDF" / "src" / "main.cpp",
+                build / "DemoPlatformIOEspIdf.o",
+            ),
+        )
+
+        for label, demo_source, demo_object in demo_sources:
+            print(f"\n{label}")
+            demo_command = [
+                str(host_compiler),
+                "-std=c++20",
+                "-Wall",
+                "-Wextra",
+                "-Wpedantic",
+                "-Werror",
+                "-I",
+                str(root / "tests" / "support" / "esp_idf"),
+                "-I",
+                str(root / "src"),
+                "-I",
+                str(persistence / "src"),
+                "-I",
+                str(system / "src"),
+                "-c",
+                str(demo_source),
+                "-o",
+                str(demo_object),
+            ]
+
+            if args.verbose:
+                print(" ".join(shlex.quote(value) for value in demo_command))
+
+            result = subprocess.run(
+                demo_command,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                print(
+                    "\nFAIL: ESP-IDF concrete provider demo source did not compile.",
+                    file=sys.stderr,
+                )
+                return result.returncode
+
+        print("\n[4/4] Compiling ESP-IDF concrete contract...")
 
         if platformio_framework:
             result = compile_platformio_framework(
@@ -579,8 +630,8 @@ def main():
             return result
 
         print(
-            "\nPASS: ESP-IDF concrete provider behavior tests passed and "
-            "the providers compiled against the real SDK contract."
+            "\nPASS: ESP-IDF concrete provider behavior tests and demo source "
+            "validation passed, and the providers compiled against the real SDK contract."
         )
         return 0
     finally:
