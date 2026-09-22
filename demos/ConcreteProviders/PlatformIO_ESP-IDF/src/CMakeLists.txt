@@ -11,5 +11,8 @@ target_include_directories(
     PRIVATE
         "../../../../src"
         "../../../../../EDP-Persistence/src"
+        "../../../../../EDP-Memory/src"
+        "../../../../../EDP-Platform/src"
+        "../../../../../EDP-Platform-Portable/src"
         "../../../../../EDP-System/src"
 )
