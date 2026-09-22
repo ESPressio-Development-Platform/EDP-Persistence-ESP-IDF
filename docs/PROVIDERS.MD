@@ -32,7 +32,8 @@ The binding profile is part of the provider type and declares the semantic guara
 - media removability;
 - maximum complete path bytes;
 - maximum path-segment bytes;
-- maximum file size.
+- maximum file size;
+- safe invocation concurrency.
 
 ESP-IDF VFS can dispatch to materially different filesystems, so these guarantees are not inferred from VFS itself. The application must choose a profile that is true for the mounted backend.
 
@@ -49,7 +50,11 @@ Use a different/specialized provider for a backend which does not genuinely supp
 
 The provider does not mount, format, unmount, or own the VFS backend. The mount, caller-owned base-path storage, and ByteOperations provider must all remain valid for the provider's complete lifetime.
 
-All FileStorage operations advertise `CallerSerialized`. File mutation failure preservation is `MayModify`, and interruption atomicity is `None`.
+`VfsFileStorage` advertises the binding profile's invocation-concurrency guarantee. The standard profile defaults to `CallerSerialized`; older/custom profiles without an explicit concurrency field are also treated as `CallerSerialized`. A binding may opt into `ConcurrentReads` or `ConcurrentOperations` only when the actual mounted filesystem safely supports that invocation level.
+
+The provider does not add internal synchronization merely because a stronger binding guarantee is declared. The concurrency property is therefore zero-RAM/zero-runtime-overhead metadata describing the mounted substrate, not a promise manufactured by the adapter.
+
+File mutation failure preservation is `MayModify`, and interruption atomicity is `None`.
 
 For a binding which explicitly advertises `PowerLoss` retention, file-content mutation success additionally requires `fsync()` before close. Creation/removal/rename/directory metadata durability still depends on the mounted backend's documented syscall semantics; a PowerLoss profile is valid only when that backend documents the required semantics.
 
