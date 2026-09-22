@@ -123,13 +123,13 @@ namespace {
     );
 
     static_assert(
-        ESPressio::Persistence::EspIdf::Detail::BindingConcurrency<
+        ESPressio::Persistence::EspIdf::BindingDetail::BindingConcurrency<
             ContractVfsProfile
         >() == ESPressio::Persistence::InvocationConcurrency::CallerSerialized
     );
 
     static_assert(
-        ESPressio::Persistence::EspIdf::Detail::BindingConcurrency<
+        ESPressio::Persistence::EspIdf::BindingDetail::BindingConcurrency<
             ConcurrentReadVfsProfile
         >() == ESPressio::Persistence::InvocationConcurrency::ConcurrentReads
     );
