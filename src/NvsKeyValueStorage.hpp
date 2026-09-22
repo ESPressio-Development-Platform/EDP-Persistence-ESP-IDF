@@ -29,10 +29,10 @@ namespace ESPressio::Persistence::EspIdf {
                 Framework::PropertyValue<ClearAllSupport, Support::Supported>,
                 Framework::PropertyValue<KeyValueCapacityReportingSupport, Support::Unsupported>,
                 Framework::PropertyValue<KeyValueInvocationConcurrency, InvocationConcurrency::CallerSerialized>,
-                Framework::PropertyValue<KeyValueFailurePreservation, FailurePreservation::PreservesCommittedState>,
+                Framework::PropertyValue<KeyValueFailurePreservation, FailurePreservation::MayModify>,
                 Framework::PropertyValue<KeyValueInterruptionAtomicity, InterruptionAtomicity::PowerLoss>,
                 Framework::PropertyValue<ClearAllFailurePreservation, FailurePreservation::MayModify>,
-                Framework::PropertyValue<ClearAllInterruptionAtomicity, InterruptionAtomicity::PowerLoss>
+                Framework::PropertyValue<ClearAllInterruptionAtomicity, InterruptionAtomicity::None>
             >
         >
     > {
@@ -49,22 +49,33 @@ namespace ESPressio::Persistence::EspIdf {
         /// Indicates whether Handle_ is currently open.
         bool IsReady_;
 
-        /// Copies a validated EDP key into NVS's null-terminated key representation.
-        [[nodiscard]] static bool CopyKey(
+        enum class KeyCopyStatus : std::uint8_t {
+            Succeeded = 0U,
+            TooLong = 1U,
+            NotRepresentable = 2U
+        };
+
+        /// Copies an EDP key into NVS's documented ASCII key representation.
+        [[nodiscard]] static KeyCopyStatus CopyKey(
             KeyView Key,
             char (&Buffer)[16U]
         ) noexcept {
             if (Key.Size() > 15U) {
-                return false;
+                return KeyCopyStatus::TooLong;
             }
 
-            std::memcpy(
-                Buffer,
-                Key.Data(),
-                Key.Size()
-            );
+            for (std::size_t Index = 0U; Index < Key.Size(); ++Index) {
+                const auto Byte = static_cast<unsigned char>(Key.Data()[Index]);
+
+                if (Byte > 0x7FU) {
+                    return KeyCopyStatus::NotRepresentable;
+                }
+
+                Buffer[Index] = Key.Data()[Index];
+            }
+
             Buffer[Key.Size()] = '\0';
-            return true;
+            return KeyCopyStatus::Succeeded;
         }
 
     public:
@@ -120,8 +131,17 @@ namespace ESPressio::Persistence::EspIdf {
 
             char NativeKey[16U];
 
-            if (!CopyKey(Key, NativeKey)) {
+            const auto KeyStatus = CopyKey(
+                Key,
+                NativeKey
+            );
+
+            if (KeyStatus == KeyCopyStatus::TooLong) {
                 return {KeyValueSizeStatus::KeyTooLong, StorageSize{}};
+            }
+
+            if (KeyStatus == KeyCopyStatus::NotRepresentable) {
+                return {KeyValueSizeStatus::KeyNotRepresentable, StorageSize{}};
             }
 
             std::size_t Size = 0U;
@@ -140,6 +160,10 @@ namespace ESPressio::Persistence::EspIdf {
                 return {KeyValueSizeStatus::IoFailure, StorageSize{}};
             }
 
+            if (Size > 512U) {
+                return {KeyValueSizeStatus::ProviderFailure, StorageSize{}};
+            }
+
             return {KeyValueSizeStatus::Succeeded, StorageSize{Size}};
         }
 
@@ -154,8 +178,17 @@ namespace ESPressio::Persistence::EspIdf {
 
             char NativeKey[16U];
 
-            if (!CopyKey(Key, NativeKey)) {
+            const auto KeyStatus = CopyKey(
+                Key,
+                NativeKey
+            );
+
+            if (KeyStatus == KeyCopyStatus::TooLong) {
                 return {KeyValueReadStatus::KeyTooLong, 0U, 0U, StorageSize{}};
+            }
+
+            if (KeyStatus == KeyCopyStatus::NotRepresentable) {
+                return {KeyValueReadStatus::KeyNotRepresentable, 0U, 0U, StorageSize{}};
             }
 
             std::size_t CompleteSize = 0U;
@@ -241,15 +274,29 @@ namespace ESPressio::Persistence::EspIdf {
 
             char NativeKey[16U];
 
-            if (!CopyKey(Key, NativeKey)) {
+            const auto KeyStatus = CopyKey(
+                Key,
+                NativeKey
+            );
+
+            if (KeyStatus == KeyCopyStatus::TooLong) {
                 return KeyValueStoreStatus::KeyTooLong;
+            }
+
+            if (KeyStatus == KeyCopyStatus::NotRepresentable) {
+                return KeyValueStoreStatus::KeyNotRepresentable;
             }
 
             if (Source.Size > 512U) {
                 return KeyValueStoreStatus::ValueTooLarge;
             }
 
-            if (nvs_set_blob(Handle_, NativeKey, Source.Address, Source.Size) != ESP_OK) {
+            static constexpr std::uint8_t EmptyValueStorage = 0U;
+            const auto* Storage = Source.Size == 0U
+                ? static_cast<const void*>(&EmptyValueStorage)
+                : Source.Address;
+
+            if (nvs_set_blob(Handle_, NativeKey, Storage, Source.Size) != ESP_OK) {
                 return KeyValueStoreStatus::IoFailure;
             }
 
@@ -264,8 +311,17 @@ namespace ESPressio::Persistence::EspIdf {
 
             char NativeKey[16U];
 
-            if (!CopyKey(Key, NativeKey)) {
+            const auto KeyStatus = CopyKey(
+                Key,
+                NativeKey
+            );
+
+            if (KeyStatus == KeyCopyStatus::TooLong) {
                 return KeyValueRemoveStatus::KeyTooLong;
+            }
+
+            if (KeyStatus == KeyCopyStatus::NotRepresentable) {
+                return KeyValueRemoveStatus::KeyNotRepresentable;
             }
 
             const auto Result = nvs_erase_key(
