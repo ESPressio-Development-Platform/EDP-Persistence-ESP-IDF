@@ -116,6 +116,38 @@ def discover_idf_root(explicit_path=None, explicit_idf_py=None):
     return None
 
 
+def is_platformio_framework(idf_root, platformio_home):
+    try:
+        return idf_root.resolve() == (
+            platformio_home / "packages" / "framework-espidf"
+        ).resolve()
+    except OSError:
+        return False
+
+
+def discover_platformio(explicit_platformio, platformio_home):
+    if explicit_platformio:
+        candidate = Path(explicit_platformio).expanduser()
+
+        if candidate.is_file():
+            return candidate.resolve()
+
+    for command in ("platformio", "pio"):
+        candidate = shutil.which(command)
+
+        if candidate:
+            return Path(candidate).resolve()
+
+    for candidate in (
+        platformio_home / "penv" / "bin" / "platformio",
+        platformio_home / "penv" / "bin" / "pio",
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+
+    return None
+
+
 def print_missing_dependency(name, detail):
     print(f"  - {name}: {detail}", file=sys.stderr)
 
@@ -124,6 +156,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--idf-path")
     parser.add_argument("--idf-py")
+    parser.add_argument("--platformio")
+    parser.add_argument("--platformio-home")
     parser.add_argument("--persistence")
     parser.add_argument("--system")
     parser.add_argument("--keep-build", action="store_true")
@@ -131,6 +165,11 @@ def main():
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
+    platformio_home = (
+        Path(args.platformio_home).expanduser().resolve()
+        if args.platformio_home
+        else Path.home() / ".platformio"
+    )
     persistence = (
         existing_directory(args.persistence)
         if args.persistence
@@ -144,6 +183,15 @@ def main():
     idf_root = discover_idf_root(
         explicit_path=args.idf_path,
         explicit_idf_py=args.idf_py,
+    )
+    platformio_framework = (
+        idf_root is not None
+        and is_platformio_framework(idf_root, platformio_home)
+    )
+    platformio = (
+        discover_platformio(args.platformio, platformio_home)
+        if platformio_framework
+        else None
     )
 
     missing = []
@@ -169,6 +217,16 @@ def main():
             (
                 "ESP-IDF",
                 "no installation containing tools/idf.py was found; activate ESP-IDF, set IDF_PATH, or pass --idf-path /path/to/esp-idf",
+            )
+        )
+
+    if platformio_framework and platformio is None:
+        missing.append(
+            (
+                "PlatformIO",
+                "framework-espidf was found under the PlatformIO package root, "
+                "but neither platformio/pio on PATH nor the PlatformIO penv "
+                "executable was found; pass --platformio /path/to/platformio",
             )
         )
 
@@ -222,15 +280,50 @@ target_include_directories(${COMPONENT_LIB} PRIVATE
             )
         )
 
+        if platformio_framework:
+            (build / "platformio.ini").write_text(
+                """[platformio]
+src_dir = main
+
+[env:esp32dev]
+platform = espressif32
+board = esp32dev
+framework = espidf
+"""
+            )
+
         print(f"ESP-IDF root: {idf_root}")
         print(f"ESP-IDF idf.py: {idf_py}")
+
+        if platformio_framework:
+            print("ESP-IDF environment: PlatformIO")
+            print(f"PlatformIO executable: {platformio}")
+        else:
+            print("ESP-IDF environment: standalone")
         print(f"EDP-Persistence-ESP-IDF: {root}")
         print(f"EDP-Persistence: {persistence}")
         print(f"EDP-System: {system}")
         print(f"Build directory: {build}")
         print("\n[1/1] Compiling ESP-IDF concrete contract...")
 
-        if export_script.is_file():
+        if platformio_framework:
+            command = [
+                str(platformio),
+                "run",
+                "--project-dir",
+                str(build),
+                "--environment",
+                "esp32dev",
+            ]
+
+            if args.verbose:
+                print(" ".join(shlex.quote(value) for value in command))
+
+            result = subprocess.run(
+                command,
+                check=False,
+            )
+        elif export_script.is_file():
             command = (
                 f"source {shlex.quote(str(export_script))} >/dev/null "
                 f"&& idf.py -C {shlex.quote(str(build))} build"
