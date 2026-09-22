@@ -217,6 +217,9 @@ def write_compile_probe_sdkconfig(config_directory):
 def compile_platformio_framework(
     root,
     persistence,
+    memory,
+    platform,
+    platform_portable,
     system,
     idf_root,
     platformio_home,
@@ -260,6 +263,12 @@ def compile_platformio_framework(
         "-I",
         str(persistence / "src"),
         "-I",
+        str(memory / "src"),
+        "-I",
+        str(platform / "src"),
+        "-I",
+        str(platform_portable / "src"),
+        "-I",
         str(system / "src"),
     ]
 
@@ -293,6 +302,9 @@ def compile_platformio_framework(
 def compile_standalone_idf(
     root,
     persistence,
+    memory,
+    platform,
+    platform_portable,
     system,
     idf_root,
     build,
@@ -320,11 +332,17 @@ target_include_directories(${COMPONENT_LIB} PRIVATE
     "%s"
     "%s"
     "%s"
+    "%s"
+    "%s"
+    "%s"
 )
 """
         % (
             root / "src",
             persistence / "src",
+            memory / "src",
+            platform / "src",
+            platform_portable / "src",
             system / "src",
         )
     )
@@ -391,6 +409,9 @@ def main():
     parser.add_argument("--host-compiler")
     parser.add_argument("--platformio-home")
     parser.add_argument("--persistence")
+    parser.add_argument("--memory")
+    parser.add_argument("--platform")
+    parser.add_argument("--platform-portable")
     parser.add_argument("--system")
     parser.add_argument("--keep-build", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -406,6 +427,21 @@ def main():
         existing_directory(args.persistence)
         if args.persistence
         else sibling(root, "EDP-Persistence")
+    )
+    memory = (
+        existing_directory(args.memory)
+        if args.memory
+        else sibling(root, "EDP-Memory")
+    )
+    platform = (
+        existing_directory(args.platform)
+        if args.platform
+        else sibling(root, "EDP-Platform")
+    )
+    platform_portable = (
+        existing_directory(args.platform_portable)
+        if args.platform_portable
+        else sibling(root, "EDP-Platform-Portable")
     )
     system = (
         existing_directory(args.system)
@@ -445,6 +481,30 @@ def main():
             (
                 "EDP-Persistence",
                 "no sibling checkout found; pass --persistence /path/to/EDP-Persistence",
+            )
+        )
+
+    if memory is None:
+        missing.append(
+            (
+                "EDP-Memory",
+                "no sibling checkout found; pass --memory /path/to/EDP-Memory",
+            )
+        )
+
+    if platform is None:
+        missing.append(
+            (
+                "EDP-Platform",
+                "no sibling checkout found; pass --platform /path/to/EDP-Platform",
+            )
+        )
+
+    if platform_portable is None:
+        missing.append(
+            (
+                "EDP-Platform-Portable",
+                "no sibling checkout found; pass --platform-portable /path/to/EDP-Platform-Portable",
             )
         )
 
@@ -499,6 +559,9 @@ def main():
         print(f"Host compiler: {host_compiler}")
         print(f"EDP-Persistence-ESP-IDF: {root}")
         print(f"EDP-Persistence: {persistence}")
+        print(f"EDP-Memory: {memory}")
+        print(f"EDP-Platform: {platform}")
+        print(f"EDP-Platform-Portable: {platform_portable}")
         print(f"EDP-System: {system}")
         print(f"Build directory: {build}")
 
@@ -516,6 +579,12 @@ def main():
             str(root / "src"),
             "-I",
             str(persistence / "src"),
+            "-I",
+            str(memory / "src"),
+            "-I",
+            str(platform / "src"),
+            "-I",
+            str(platform_portable / "src"),
             "-I",
             str(system / "src"),
             str(root / "tests" / "ProviderBehaviorTests.cpp"),
@@ -609,6 +678,9 @@ def main():
             result = compile_platformio_framework(
                 root,
                 persistence,
+                memory,
+                platform,
+                platform_portable,
                 system,
                 idf_root,
                 platformio_home,
@@ -620,6 +692,9 @@ def main():
             result = compile_standalone_idf(
                 root,
                 persistence,
+                memory,
+                platform,
+                platform_portable,
                 system,
                 idf_root,
                 build,
