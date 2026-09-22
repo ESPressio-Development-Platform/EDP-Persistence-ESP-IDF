@@ -1,14 +1,25 @@
 #include <Arduino.h>
 #include <SD.h>
 
+#include <memory/ByteOperationsProvider.hpp>
+
 #include <ESPressio_Persistence_ESP_IDF.hpp>
 
 namespace {
 
     using namespace ESPressio::Persistence;
 
+    /// Logical Composition identity used by this demo.
     struct DemoBinding final {};
 
+
+    // Demo provider types.
+
+    /// Standard C/C++ ByteOperations concrete selected by the demo.
+    using DemoByteOperationsProvider =
+        ESPressio::Platform::Portable::Memory::ByteOperationsProvider;
+
+    /// Conservative semantic profile for the removable FAT filesystem used by this demo.
     using DemoFileProfile = EspIdf::VfsBindingProfile<
         RetentionLevel::Restart,
         TextCaseSensitivity::CaseInsensitive,
@@ -18,49 +29,79 @@ namespace {
         4096ULL
     >;
 
+    /// Concrete ESP-IDF VFS provider used by the demo.
     using DemoFileStorage = EspIdf::VfsFileStorage<
         DemoBinding,
-        DemoFileProfile
+        DemoFileProfile,
+        DemoByteOperationsProvider
     >;
 
+    /// Concrete ESP-IDF NVS provider used by the demo.
     using DemoKeyValueStorage =
-        EspIdf::NvsKeyValueStorage<DemoBinding>;
+        EspIdf::NvsKeyValueStorage<
+            DemoBinding,
+            DemoByteOperationsProvider
+        >;
 
 
-    bool RunFileStorageDemo() {
+    /// Result of one demo operation group.
+    enum class DemoStatus : std::uint8_t {
+        Succeeded = 0U,
+        Failed = 1U
+    };
+
+
+    /// Exercises VfsFileStorage against the VFS mount created by Arduino SD.
+    [[nodiscard]] DemoStatus RunFileStorageDemo(
+        DemoByteOperationsProvider& ByteOperations
+    ) {
         if (!SD.begin()) {
             Serial.println("FileStorage: SD mount failed");
-            return false;
+            return DemoStatus::Failed;
         }
 
-        DemoFileStorage Storage("/sd");
+        DemoFileStorage Storage(
+            "/sd",
+            ByteOperations
+        );
 
         if (!Storage.IsFileStorageReady()) {
             Serial.println("FileStorage: VFS base path is not ready");
-            return false;
+            return DemoStatus::Failed;
         }
 
         constexpr auto Path = FilePathView::Validate("edp-demo.bin");
         static_assert(Path.Status == FilePathValidationStatus::Succeeded);
 
-        const std::uint8_t Payload[] = {0x21U, 0x22U, 0x23U, 0x24U};
+        const std::uint8_t Payload[] = {
+            0x21U,
+            0x22U,
+            0x23U,
+            0x24U
+        };
 
         if (Storage.ReplaceFile(
             Path.Value,
-            SourceBufferView{Payload, sizeof(Payload)}
+            SourceBufferView{
+                Payload,
+                sizeof(Payload)
+            }
         ) != FileReplaceStatus::Succeeded) {
             Serial.println("FileStorage: replace failed");
-            return false;
+            return DemoStatus::Failed;
         }
 
         std::uint8_t Buffer[sizeof(Payload)]{};
         const auto Read = Storage.ReadFileAt(
             Path.Value,
             StorageOffset{},
-            DestinationBufferView{Buffer, sizeof(Buffer)}
+            DestinationBufferView{
+                Buffer,
+                sizeof(Buffer)
+            }
         );
 
-        const bool ReadMatches =
+        const bool IsReadMatch =
             Read.Status == FileReadStatus::Succeeded &&
             Read.BytesTransferred == sizeof(Payload) &&
             Buffer[0] == Payload[0] &&
@@ -68,91 +109,114 @@ namespace {
             Buffer[2] == Payload[2] &&
             Buffer[3] == Payload[3];
 
-        const auto Remove = Storage.RemoveFile(Path.Value);
+        const auto RemoveStatus = Storage.RemoveFile(Path.Value);
 
-        if (!ReadMatches || Remove != FileRemoveStatus::Succeeded) {
+        if (!IsReadMatch || RemoveStatus != FileRemoveStatus::Succeeded) {
             Serial.println("FileStorage: verification failed");
-            return false;
+            return DemoStatus::Failed;
         }
 
         Serial.println("FileStorage: PASS");
-        return true;
+        return DemoStatus::Succeeded;
     }
 
 
-    bool RunKeyValueStorageDemo() {
-        DemoKeyValueStorage Storage;
+    /// Exercises NvsKeyValueStorage against the Arduino runtime's initialized NVS partition.
+    [[nodiscard]] DemoStatus RunKeyValueStorageDemo(
+        DemoByteOperationsProvider& ByteOperations
+    ) {
+        DemoKeyValueStorage Storage(ByteOperations);
 
-        if (!Storage.Open("edp-demo")) {
+        if (Storage.Open(
+            "edp-demo"
+        ) != EspIdf::NvsOpenStatus::Succeeded) {
             Serial.println("KeyValueStorage: NVS open failed");
-            return false;
+            return DemoStatus::Failed;
         }
 
         constexpr auto Key = KeyView::Validate("payload");
         static_assert(Key.Status == KeyValidationStatus::Succeeded);
 
-        const std::uint8_t Payload[] = {0x61U, 0x62U, 0x63U};
+        const std::uint8_t Payload[] = {
+            0x61U,
+            0x62U,
+            0x63U
+        };
 
         if (Storage.StoreValue(
             Key.Value,
-            SourceBufferView{Payload, sizeof(Payload)}
+            SourceBufferView{
+                Payload,
+                sizeof(Payload)
+            }
         ) != KeyValueStoreStatus::Succeeded) {
             Serial.println("KeyValueStorage: store failed");
             Storage.Close();
-            return false;
+            return DemoStatus::Failed;
         }
 
         std::uint8_t Buffer[sizeof(Payload)]{};
         const auto Read = Storage.ReadValue(
             Key.Value,
-            DestinationBufferView{Buffer, sizeof(Buffer)}
+            DestinationBufferView{
+                Buffer,
+                sizeof(Buffer)
+            }
         );
 
-        const bool ReadMatches =
+        const bool IsReadMatch =
             Read.Status == KeyValueReadStatus::Succeeded &&
             Read.BytesTransferred == sizeof(Payload) &&
             Buffer[0] == Payload[0] &&
             Buffer[1] == Payload[1] &&
             Buffer[2] == Payload[2];
 
-        const auto EmptyStore = Storage.StoreValue(
+        const auto EmptyStoreStatus = Storage.StoreValue(
             Key.Value,
-            SourceBufferView{nullptr, 0U}
+            SourceBufferView{
+                nullptr,
+                0U
+            }
         );
         const auto EmptySize = Storage.GetValueSize(Key.Value);
-        const auto Remove = Storage.RemoveKey(Key.Value);
+        const auto RemoveStatus = Storage.RemoveKey(Key.Value);
 
         Storage.Close();
 
-        const bool EmptyValueWorks =
-            EmptyStore == KeyValueStoreStatus::Succeeded &&
+        const bool IsEmptyValueValid =
+            EmptyStoreStatus == KeyValueStoreStatus::Succeeded &&
             EmptySize.Status == KeyValueSizeStatus::Succeeded &&
             EmptySize.Size.RawValue == 0U;
 
-        if (!ReadMatches ||
-            !EmptyValueWorks ||
-            Remove != KeyValueRemoveStatus::Succeeded) {
+        if (!IsReadMatch ||
+            !IsEmptyValueValid ||
+            RemoveStatus != KeyValueRemoveStatus::Succeeded) {
             Serial.println("KeyValueStorage: verification failed");
-            return false;
+            return DemoStatus::Failed;
         }
 
         Serial.println("KeyValueStorage: PASS");
-        return true;
+        return DemoStatus::Succeeded;
     }
 
 
+    /// Runs both concrete provider demonstrations.
     void RunDemo() {
-        const bool FilePassed = RunFileStorageDemo();
-        const bool KeyValuePassed = RunKeyValueStorageDemo();
+        DemoByteOperationsProvider ByteOperations;
+
+        const auto FileStatus = RunFileStorageDemo(ByteOperations);
+        const auto KeyValueStatus = RunKeyValueStorageDemo(ByteOperations);
 
         Serial.println(
-            FilePassed && KeyValuePassed
+            FileStatus == DemoStatus::Succeeded &&
+            KeyValueStatus == DemoStatus::Succeeded
                 ? "EDP-Persistence-ESP-IDF demo: PASS"
                 : "EDP-Persistence-ESP-IDF demo: FAIL"
         );
     }
 
 } // namespace
+
 
 void setup() {
     Serial.begin(115200);
