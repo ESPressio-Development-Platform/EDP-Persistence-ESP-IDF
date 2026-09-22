@@ -18,12 +18,13 @@ namespace ESPressio::Persistence::EspIdf {
 
 
     /// Declares the compile-time guarantees of one hierarchical ESP-IDF VFS binding.
-    /// TRetention is the commit-boundary retention guaranteed by the mounted filesystem.
-    /// TCaseSensitivity is the path comparison behaviour of the mounted filesystem.
-    /// TRemovability describes whether the backing medium can disappear while the system is running.
-    /// TMaximumPathBytes is the largest complete EDP path accepted by the binding.
-    /// TMaximumPathSegmentBytes is the largest individual path segment accepted by the binding.
-    /// TMaximumFileSize is the largest logical file supported by the binding.
+    ///
+    /// @tparam TRetention Commit-boundary retention guaranteed by the mounted filesystem.
+    /// @tparam TCaseSensitivity Path comparison behaviour guaranteed by the mounted filesystem.
+    /// @tparam TRemovability Whether the backing medium can disappear while the system is running.
+    /// @tparam TMaximumPathBytes Largest complete EDP path accepted by the binding.
+    /// @tparam TMaximumPathSegmentBytes Largest individual path segment accepted by the binding.
+    /// @tparam TMaximumFileSize Largest logical file supported by the binding.
     template<
         RetentionLevel TRetention,
         TextCaseSensitivity TCaseSensitivity,
@@ -165,6 +166,8 @@ namespace ESPressio::Persistence::EspIdf {
             return Length + 1U + TBindingProfile::MaximumPathBytes + 1U <= NativePathCapacity;
         }
 
+        // Path conversion and representation helpers.
+
         /// Reports whether a canonical EDP path fits the binding's advertised limits.
         [[nodiscard]] static bool IsPathRepresentable(FilePathView Path) noexcept {
             if (Path.Size() > TBindingProfile::MaximumPathBytes) {
@@ -259,6 +262,8 @@ namespace ESPressio::Persistence::EspIdf {
 
     public:
 
+        // Construction and readiness.
+
         /// Constructs a provider over an already-mounted VFS base path and ByteOperations provider.
         VfsFileStorage(
             const char* BasePath,
@@ -271,6 +276,8 @@ namespace ESPressio::Persistence::EspIdf {
         [[nodiscard]] bool IsFileStorageReady() const noexcept {
             return BasePath_ != nullptr;
         }
+
+        // FileStorage contract.
 
         /// Returns the size of one regular file.
         [[nodiscard]] FileSizeResult GetFileSize(FilePathView Path) const noexcept {
