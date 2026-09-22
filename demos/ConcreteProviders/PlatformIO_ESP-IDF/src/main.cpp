@@ -37,7 +37,8 @@ namespace {
         MediaRemovability::Fixed,
         63U,
         31U,
-        4096ULL
+        4096ULL,
+        InvocationConcurrency::ConcurrentReads
     >;
 
     /// Concrete ESP-IDF VFS provider used by the demo.
