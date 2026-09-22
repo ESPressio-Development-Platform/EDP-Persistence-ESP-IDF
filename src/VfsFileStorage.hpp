@@ -285,7 +285,10 @@ namespace ESPressio::Persistence::EspIdf {
 
             struct stat Information {};
 
-            if (stat(NativePath, &Information) != 0) {
+            if (stat(
+                NativePath,
+                &Information
+            ) != 0) {
                 return {errno == ENOENT ? FileSizeStatus::NotFound : FileSizeStatus::IoFailure, StorageSize{}};
             }
 
@@ -326,7 +329,11 @@ namespace ESPressio::Persistence::EspIdf {
                 return {errno == ENOENT ? FileReadStatus::NotFound : FileReadStatus::IoFailure, 0U, 0U, StorageSize{}};
             }
 
-            if (std::fseek(File, 0L, SEEK_END) != 0) {
+            if (std::fseek(
+                File,
+                0L,
+                SEEK_END
+            ) != 0) {
                 std::fclose(File);
                 return {FileReadStatus::IoFailure, 0U, 0U, StorageSize{}};
             }
@@ -350,7 +357,11 @@ namespace ESPressio::Persistence::EspIdf {
                 return {FileReadStatus::InvalidOffset, 0U, 0U, StorageSize{}};
             }
 
-            if (std::fseek(File, static_cast<long>(Offset.RawValue), SEEK_SET) != 0) {
+            if (std::fseek(
+                File,
+                static_cast<long>(Offset.RawValue),
+                SEEK_SET
+            ) != 0) {
                 std::fclose(File);
                 return {FileReadStatus::IoFailure, 0U, 0U, StorageSize{}};
             }
@@ -400,7 +411,11 @@ namespace ESPressio::Persistence::EspIdf {
 
             struct stat ExistingInformation {};
 
-            if (stat(NativePath, &ExistingInformation) == 0 && S_ISDIR(ExistingInformation.st_mode)) {
+            if (stat(
+                NativePath,
+                &ExistingInformation
+            ) == 0 &&
+                S_ISDIR(ExistingInformation.st_mode)) {
                 return FileReplaceStatus::EntryTypeConflict;
             }
 
@@ -454,7 +469,11 @@ namespace ESPressio::Persistence::EspIdf {
             if (errno == EISDIR || errno == EPERM) {
                 struct stat Information {};
 
-                if (stat(NativePath, &Information) == 0 && S_ISDIR(Information.st_mode)) {
+                if (stat(
+                    NativePath,
+                    &Information
+                ) == 0 &&
+                    S_ISDIR(Information.st_mode)) {
                     return FileRemoveStatus::EntryTypeConflict;
                 }
             }
@@ -473,14 +492,20 @@ namespace ESPressio::Persistence::EspIdf {
                 return DirectoryCreateStatus::PathNotRepresentable;
             }
 
-            if (mkdir(NativePath, 0775) == 0) {
+            if (mkdir(
+                NativePath,
+                0775
+            ) == 0) {
                 return DirectoryCreateStatus::Succeeded;
             }
 
             if (errno == EEXIST) {
                 struct stat Information {};
 
-                if (stat(NativePath, &Information) == 0) {
+                if (stat(
+                    NativePath,
+                    &Information
+                ) == 0) {
                     return S_ISDIR(Information.st_mode)
                         ? DirectoryCreateStatus::AlreadyExists
                         : DirectoryCreateStatus::EntryTypeConflict;
@@ -610,7 +635,10 @@ namespace ESPressio::Persistence::EspIdf {
 
                     struct stat EntryInformation {};
 
-                    if (stat(EntryPath, &EntryInformation) != 0) {
+                    if (stat(
+                        EntryPath,
+                        &EntryInformation
+                    ) != 0) {
                         closedir(Handle);
                         return {FileEnumerationStatus::IoFailure, StorageSize{Visited}};
                     }
@@ -664,11 +692,17 @@ namespace ESPressio::Persistence::EspIdf {
 
             struct stat Information {};
 
-            if (stat(NativeSource, &Information) != 0) {
+            if (stat(
+                NativeSource,
+                &Information
+            ) != 0) {
                 return FileRenameStatus::SourceNotFound;
             }
 
-            if (stat(NativeDestination, &Information) == 0) {
+            if (stat(
+                NativeDestination,
+                &Information
+            ) == 0) {
                 return FileRenameStatus::DestinationAlreadyExists;
             }
 
@@ -702,7 +736,10 @@ namespace ESPressio::Persistence::EspIdf {
 
             struct stat Information {};
 
-            if (stat(NativePath, &Information) != 0) {
+            if (stat(
+                NativePath,
+                &Information
+            ) != 0) {
                 return FileAppendStatus::NotFound;
             }
 
@@ -728,7 +765,14 @@ namespace ESPressio::Persistence::EspIdf {
                 return FileAppendStatus::IoFailure;
             }
 
-            const auto Written = Source.Size == 0U ? 0U : std::fwrite(Source.Address, 1U, Source.Size, File);
+            const auto Written = Source.Size == 0U
+                ? 0U
+                : std::fwrite(
+                    Source.Address,
+                    1U,
+                    Source.Size,
+                    File
+                );
             const auto CommitStatus = CommitFileMutation(File);
             return Written == Source.Size && CommitStatus == FileMutationCommitStatus::Succeeded ? FileAppendStatus::Succeeded : FileAppendStatus::IoFailure;
         }
@@ -767,7 +811,12 @@ namespace ESPressio::Persistence::EspIdf {
                 "r+b"
             );
 
-            if (File == nullptr || std::fseek(File, static_cast<long>(Offset.RawValue), SEEK_SET) != 0) {
+            if (File == nullptr ||
+                std::fseek(
+                    File,
+                    static_cast<long>(Offset.RawValue),
+                    SEEK_SET
+                ) != 0) {
                 if (File != nullptr) {
                     std::fclose(File);
                 }
@@ -775,7 +824,14 @@ namespace ESPressio::Persistence::EspIdf {
                 return FileWriteAtStatus::IoFailure;
             }
 
-            const auto Written = Source.Size == 0U ? 0U : std::fwrite(Source.Address, 1U, Source.Size, File);
+            const auto Written = Source.Size == 0U
+                ? 0U
+                : std::fwrite(
+                    Source.Address,
+                    1U,
+                    Source.Size,
+                    File
+                );
             const auto CommitStatus = CommitFileMutation(File);
             return Written == Source.Size && CommitStatus == FileMutationCommitStatus::Succeeded ? FileWriteAtStatus::Succeeded : FileWriteAtStatus::IoFailure;
         }
