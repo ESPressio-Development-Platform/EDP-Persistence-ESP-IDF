@@ -98,6 +98,13 @@ namespace {
             ConcurrentReadFileStorageNeed
         >;
 
+    /// Complete architecture proving the ConcurrentReads provider's Memory dependency is satisfied.
+    using ConcurrentReadArchitecture = Framework::Architecture<
+        ContractMemoryComposition,
+        ConcurrentReadPersistenceComposition
+    >;
+
+
     /// Complete architecture proving the Persistence -> Memory dependency is satisfied.
     using ContractArchitecture = Framework::Architecture<
         ContractMemoryComposition,
@@ -106,6 +113,7 @@ namespace {
 
 
     static_assert(ContractArchitecture::IsValid);
+    static_assert(ConcurrentReadArchitecture::IsValid);
 
     static_assert(
         std::is_same_v<
@@ -129,6 +137,9 @@ namespace {
     static_assert([]() consteval {
         ESPressio::Persistence::ValidatePersistenceProvider<
             ContractFileStorageProvider
+        >();
+        ESPressio::Persistence::ValidatePersistenceProvider<
+            ConcurrentReadFileStorageProvider
         >();
         ESPressio::Persistence::ValidatePersistenceProvider<
             ContractKeyValueStorageProvider
