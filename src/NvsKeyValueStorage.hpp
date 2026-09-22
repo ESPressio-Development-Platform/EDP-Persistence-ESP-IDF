@@ -23,7 +23,7 @@ namespace ESPressio::Persistence::EspIdf {
                 Framework::PropertyValue<KeyCaseSensitivity, TextCaseSensitivity::CaseSensitive>,
                 Framework::PropertyValue<KeyValueMediaRemovability, MediaRemovability::Fixed>,
                 Framework::PropertyValue<MaximumKeyBytes, std::size_t{15U}>,
-                Framework::PropertyValue<MaximumKeyValueSize, StorageSize{1984U}>,
+                Framework::PropertyValue<MaximumKeyValueSize, StorageSize{512U}>,
                 Framework::PropertyValue<KeyEnumerationSupport, Support::Unsupported>,
                 Framework::PropertyValue<ReadValueAtSupport, Support::Unsupported>,
                 Framework::PropertyValue<ClearAllSupport, Support::Supported>,
@@ -42,6 +42,9 @@ namespace ESPressio::Persistence::EspIdf {
 
         /// Open ESP-IDF NVS handle.
         nvs_handle_t Handle_;
+
+        /// Bounded scratch space used only when the caller requests a truncated blob read.
+        mutable std::uint8_t ReadScratch_[512U];
 
         /// Indicates whether Handle_ is currently open.
         bool IsReady_;
@@ -174,16 +177,36 @@ namespace ESPressio::Persistence::EspIdf {
             const auto TransferSize = CompleteSize < Destination.Capacity ? CompleteSize : Destination.Capacity;
 
             if (TransferSize != 0U) {
-                std::size_t RequestedSize = TransferSize;
-                Result = nvs_get_blob(
-                    Handle_,
-                    NativeKey,
-                    Destination.Address,
-                    &RequestedSize
-                );
+                if (CompleteSize <= Destination.Capacity) {
+                    std::size_t RequestedSize = CompleteSize;
+                    Result = nvs_get_blob(
+                        Handle_,
+                        NativeKey,
+                        Destination.Address,
+                        &RequestedSize
+                    );
 
-                if (Result != ESP_OK || RequestedSize != TransferSize) {
-                    return {KeyValueReadStatus::IoFailure, 0U, 0U, StorageSize{}};
+                    if (Result != ESP_OK || RequestedSize != CompleteSize) {
+                        return {KeyValueReadStatus::IoFailure, 0U, 0U, StorageSize{}};
+                    }
+                } else {
+                    std::size_t RequestedSize = CompleteSize;
+                    Result = nvs_get_blob(
+                        Handle_,
+                        NativeKey,
+                        ReadScratch_,
+                        &RequestedSize
+                    );
+
+                    if (Result != ESP_OK || RequestedSize != CompleteSize) {
+                        return {KeyValueReadStatus::IoFailure, 0U, 0U, StorageSize{}};
+                    }
+
+                    std::memcpy(
+                        Destination.Address,
+                        ReadScratch_,
+                        TransferSize
+                    );
                 }
             }
 
@@ -218,7 +241,7 @@ namespace ESPressio::Persistence::EspIdf {
                 return KeyValueStoreStatus::KeyTooLong;
             }
 
-            if (Source.Size > 1984U) {
+            if (Source.Size > 512U) {
                 return KeyValueStoreStatus::ValueTooLarge;
             }
 
