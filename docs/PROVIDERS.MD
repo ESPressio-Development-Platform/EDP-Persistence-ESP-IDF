@@ -43,4 +43,6 @@ Base key/value mutation failure preservation is `MayModify`. Individual key muta
 
 ## Validation
 
-`tests/ContractCompile.cpp` invokes `ValidatePersistenceProvider<T>()` for both concrete providers. `tests/run_tests.py` validates against a standalone ESP-IDF build when available, or performs a direct C++20 compile probe against PlatformIO's installed ESP-IDF headers/toolchain.
+`tests/ProviderBehaviorTests.cpp` executes adapter-owned behavior with a bounded NVS test double and a temporary host POSIX filesystem. It covers file mutation/read behavior, truncation facts, advertised size limits, key representability, zero-length logical values, clear/remove semantics, and related operation statuses.
+
+`tests/ContractCompile.cpp` independently invokes `ValidatePersistenceProvider<T>()` for both concrete providers. `tests/run_tests.py` runs the host behavior tests first and then validates the real SDK contract through standalone ESP-IDF when available or through the direct PlatformIO-owned ESP-IDF compile probe.
