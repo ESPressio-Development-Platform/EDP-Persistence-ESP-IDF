@@ -19,14 +19,17 @@ namespace {
     using DemoByteOperationsProvider =
         ESPressio::Platform::Portable::Memory::ByteOperationsProvider;
 
-    /// Conservative semantic profile for the removable FAT filesystem used by this demo.
+    /// Semantic profile for the removable FAT filesystem used by this demo.
+    ///
+    /// ESP-IDF FATFS is documented thread-safe, so independent read invocations may be concurrent.
     using DemoFileProfile = EspIdf::VfsBindingProfile<
         RetentionLevel::Restart,
         TextCaseSensitivity::CaseInsensitive,
         MediaRemovability::Removable,
         63U,
         31U,
-        4096ULL
+        4096ULL,
+        InvocationConcurrency::ConcurrentReads
     >;
 
     /// Concrete ESP-IDF VFS provider used by the demo.
