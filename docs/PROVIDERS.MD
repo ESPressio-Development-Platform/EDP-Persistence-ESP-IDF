@@ -86,6 +86,8 @@ Consumers should select Persistence providers through Composition requirements/q
 
 The injected ByteOperations provider remains a separate Memory-domain provider selected by Bootstrap; it is not folded into the Persistence capability identity.
 
+Each concrete Persistence provider declares a cross-domain `DependsOn<Need<EDP-Memory::ByteOperations>>` Composition dependency. Application architecture validation therefore requires a Memory-domain Composition containing at least one provider satisfying ByteOperations.
+
 ## ISR boundary
 
 These Persistence providers are **not ISR-safe and make no ISR-safety guarantee**.
