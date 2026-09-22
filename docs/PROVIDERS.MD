@@ -54,6 +54,8 @@ The provider does not mount, format, unmount, or own the VFS backend. The mount,
 
 The provider does not add internal synchronization merely because a stronger binding guarantee is declared. The concurrency property is therefore zero-RAM/zero-runtime-overhead metadata describing the mounted substrate, not a promise manufactured by the adapter.
 
+The guarantee applies to the complete bound provider configuration, including injected dependencies. A binding must not advertise a stronger invocation level if its selected ByteOperations provider (or any other dependency involved in those operations) cannot safely participate at that level.
+
 File mutation failure preservation is `MayModify`, and interruption atomicity is `None`.
 
 For a binding which explicitly advertises `PowerLoss` retention, file-content mutation success additionally requires `fsync()` before close. Creation/removal/rename/directory metadata durability still depends on the mounted backend's documented syscall semantics; a PowerLoss profile is valid only when that backend documents the required semantics.
