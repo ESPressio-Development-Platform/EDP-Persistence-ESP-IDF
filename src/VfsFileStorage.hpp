@@ -16,21 +16,49 @@ namespace ESPressio::Persistence::EspIdf {
     namespace Framework = ESPressio::System::CompositionFramework;
 
 
+    /// Declares the compile-time guarantees of one hierarchical ESP-IDF VFS binding.
+    /// TRetention is the commit-boundary retention guaranteed by the mounted filesystem.
+    /// TCaseSensitivity is the path comparison behaviour of the mounted filesystem.
+    /// TRemovability describes whether the backing medium can disappear while the system is running.
+    /// TMaximumPathBytes is the largest complete EDP path accepted by the binding.
+    /// TMaximumPathSegmentBytes is the largest individual path segment accepted by the binding.
+    /// TMaximumFileSize is the largest logical file supported by the binding.
+    template<
+        RetentionLevel TRetention,
+        TextCaseSensitivity TCaseSensitivity,
+        MediaRemovability TRemovability,
+        std::size_t TMaximumPathBytes,
+        std::size_t TMaximumPathSegmentBytes,
+        std::uint64_t TMaximumFileSize
+    >
+    struct VfsBindingProfile final {
+
+        static constexpr RetentionLevel Retention = TRetention;
+        static constexpr TextCaseSensitivity CaseSensitivity = TCaseSensitivity;
+        static constexpr MediaRemovability Removability = TRemovability;
+        static constexpr std::size_t MaximumPathBytes = TMaximumPathBytes;
+        static constexpr std::size_t MaximumPathSegmentBytes = TMaximumPathSegmentBytes;
+        static constexpr StorageSize MaximumFileSize{TMaximumFileSize};
+
+    };
+
+
     /// TBindingTag distinguishes independently selectable ESP-IDF VFS roots in Composition.
-    template<class TBindingTag>
+    /// TBindingProfile declares the substrate guarantees supplied by the already-mounted hierarchical filesystem.
+    template<class TBindingTag, class TBindingProfile>
     class VfsFileStorage final : public Framework::Provider<
         Domain,
         Framework::Provides<
             Framework::Offer<
                 FileStorage,
                 Framework::PropertyValue<FileAccessMode, AccessMode::ReadWrite>,
-                Framework::PropertyValue<FileRetention, RetentionLevel::PowerLoss>,
+                Framework::PropertyValue<FileRetention, TBindingProfile::Retention>,
                 Framework::PropertyValue<FileHierarchyMode, FileHierarchy::Hierarchical>,
-                Framework::PropertyValue<FilePathCaseSensitivity, TextCaseSensitivity::CaseSensitive>,
-                Framework::PropertyValue<FileMediaRemovability, MediaRemovability::Fixed>,
-                Framework::PropertyValue<MaximumPathBytes, std::size_t{255U}>,
-                Framework::PropertyValue<MaximumPathSegmentBytes, std::size_t{255U}>,
-                Framework::PropertyValue<MaximumFileSize, StorageSize{0x7FFFFFFFULL}>,
+                Framework::PropertyValue<FilePathCaseSensitivity, TBindingProfile::CaseSensitivity>,
+                Framework::PropertyValue<FileMediaRemovability, TBindingProfile::Removability>,
+                Framework::PropertyValue<MaximumPathBytes, TBindingProfile::MaximumPathBytes>,
+                Framework::PropertyValue<MaximumPathSegmentBytes, TBindingProfile::MaximumPathSegmentBytes>,
+                Framework::PropertyValue<MaximumFileSize, TBindingProfile::MaximumFileSize>,
                 Framework::PropertyValue<DirectoryMutationSupport, Support::Supported>,
                 Framework::PropertyValue<DirectoryEnumerationSupport, Support::Supported>,
                 Framework::PropertyValue<RenameSupport, Support::Supported>,
@@ -53,6 +81,23 @@ namespace ESPressio::Persistence::EspIdf {
     > {
     private:
 
+        static_assert(
+            TBindingProfile::MaximumPathBytes > 0U &&
+            TBindingProfile::MaximumPathBytes <= 255U,
+            "ESP-IDF VfsFileStorage binding path limit must be between 1 and 255 bytes"
+        );
+
+        static_assert(
+            TBindingProfile::MaximumPathSegmentBytes > 0U &&
+            TBindingProfile::MaximumPathSegmentBytes <= TBindingProfile::MaximumPathBytes,
+            "ESP-IDF VfsFileStorage binding segment limit must be non-zero and no larger than the path limit"
+        );
+
+        static_assert(
+            TBindingProfile::MaximumFileSize.RawValue <= static_cast<std::uint64_t>(LONG_MAX),
+            "ESP-IDF VfsFileStorage binding file limit must fit the provider's fseek representation"
+        );
+
         /// Maximum native path assembled by this provider.
         static constexpr std::size_t NativePathCapacity = 512U;
 
@@ -61,12 +106,47 @@ namespace ESPressio::Persistence::EspIdf {
         /// Non-owning null-terminated VFS base path supplied by Bootstrap.
         const char* BasePath_;
 
+        /// Reports whether a caller-supplied base path leaves room for every advertised EDP path.
+        [[nodiscard]] static bool IsBasePathRepresentable(const char* BasePath) noexcept {
+            if (BasePath == nullptr) {
+                return false;
+            }
+
+            const auto Length = std::strlen(BasePath);
+
+            return Length + 1U + TBindingProfile::MaximumPathBytes + 1U <= NativePathCapacity;
+        }
+
+        /// Reports whether a canonical EDP path fits the binding's advertised limits.
+        [[nodiscard]] static bool IsPathRepresentable(FilePathView Path) noexcept {
+            if (Path.Size() > TBindingProfile::MaximumPathBytes) {
+                return false;
+            }
+
+            std::size_t SegmentSize = 0U;
+
+            for (std::size_t Index = 0U; Index < Path.Size(); ++Index) {
+                if (Path.Data()[Index] == '/') {
+                    if (SegmentSize > TBindingProfile::MaximumPathSegmentBytes) {
+                        return false;
+                    }
+
+                    SegmentSize = 0U;
+                    continue;
+                }
+
+                ++SegmentSize;
+            }
+
+            return SegmentSize <= TBindingProfile::MaximumPathSegmentBytes;
+        }
+
         /// Builds a native path below BasePath_ without allocating.
         [[nodiscard]] bool MakeNativePath(
             FilePathView Path,
             char (&Buffer)[NativePathCapacity]
         ) const noexcept {
-            if (BasePath_ == nullptr || Path.Size() > 255U) {
+            if (BasePath_ == nullptr || !IsPathRepresentable(Path)) {
                 return false;
             }
 
@@ -115,7 +195,7 @@ namespace ESPressio::Persistence::EspIdf {
 
         /// Constructs a provider over an already-mounted VFS base path.
         explicit VfsFileStorage(const char* BasePath) noexcept
-            : BasePath_(BasePath) {}
+            : BasePath_(IsBasePathRepresentable(BasePath) ? BasePath : nullptr) {}
 
         /// Reports whether a VFS base path is bound.
         [[nodiscard]] bool IsFileStorageReady() const noexcept {
