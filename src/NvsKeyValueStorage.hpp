@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstring>
-
 #include <nvs.h>
 
 #include <ESPressio_Persistence.hpp>
@@ -79,6 +77,8 @@ namespace ESPressio::Persistence::EspIdf {
 
         /// Indicates whether Handle_ is currently open.
         bool IsReady_;
+
+        // Native key representation helpers.
 
         /// Result of converting an EDP key to the native NVS key representation.
         enum class KeyCopyStatus : std::uint8_t {
