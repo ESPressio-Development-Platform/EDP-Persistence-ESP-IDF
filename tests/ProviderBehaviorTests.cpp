@@ -24,22 +24,22 @@ namespace {
         8ULL
     >;
 
-    using TestFileStorage = EspIdf::VfsFileStorage<
+    using TestFileStorageProvider = EspIdf::VfsFileStorage<
         TestBinding,
         TestFileProfile
     >;
 
-    using TestKeyValueStorage =
+    using TestKeyValueStorageProvider =
         EspIdf::NvsKeyValueStorage<TestBinding>;
 
 
-    void TestFileStorage() {
+    void RunFileStorageTests() {
         char Template[] = "/tmp/edp-persistence-idf-XXXXXX";
         char* Root = mkdtemp(Template);
         assert(Root != nullptr);
 
         {
-            TestFileStorage Storage(Root);
+            TestFileStorageProvider Storage(Root);
             assert(Storage.IsFileStorageReady());
 
             constexpr auto Path = FilePathView::Validate("file.bin");
@@ -124,8 +124,8 @@ namespace {
     }
 
 
-    void TestKeyValueStorage() {
-        TestKeyValueStorage Storage;
+    void RunKeyValueStorageTests() {
+        TestKeyValueStorageProvider Storage;
         assert(Storage.Open("test"));
 
         constexpr auto Key = KeyView::Validate("payload");
@@ -185,7 +185,7 @@ namespace {
 
 
 int main() {
-    TestFileStorage();
-    TestKeyValueStorage();
+    RunFileStorageTests();
+    RunKeyValueStorageTests();
     return 0;
 }
