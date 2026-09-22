@@ -540,7 +540,9 @@ namespace ESPressio::Persistence::EspIdf {
                 return DirectoryCreateStatus::Succeeded;
             }
 
-            if (errno == EEXIST) {
+            const int Error = errno;
+
+            if (Error == EEXIST) {
                 struct stat Information {};
 
                 if (stat(
@@ -551,10 +553,41 @@ namespace ESPressio::Persistence::EspIdf {
                         ? DirectoryCreateStatus::AlreadyExists
                         : DirectoryCreateStatus::EntryTypeConflict;
                 }
+
+                return DirectoryCreateStatus::IoFailure;
             }
 
-            if (errno == ENOENT) {
+            if (Error == ENOENT) {
                 return DirectoryCreateStatus::ParentNotFound;
+            }
+
+            if (Error == ENAMETOOLONG || Error == EINVAL) {
+                return DirectoryCreateStatus::PathNotRepresentable;
+            }
+
+            if (Error == ENOSPC) {
+                return DirectoryCreateStatus::NoSpace;
+            }
+
+            if (Error == ENODEV || Error == ENXIO) {
+                return DirectoryCreateStatus::MediaUnavailable;
+            }
+
+            if (Error == EBUSY || Error == ETIMEDOUT) {
+                return DirectoryCreateStatus::Busy;
+            }
+
+            if (Error == EROFS) {
+                return DirectoryCreateStatus::WriteProtected;
+            }
+
+            if (
+                Error == ENOSYS ||
+                Error == ENOMEM ||
+                Error == ENFILE ||
+                Error == EMFILE
+            ) {
+                return DirectoryCreateStatus::ProviderFailure;
             }
 
             return DirectoryCreateStatus::IoFailure;
