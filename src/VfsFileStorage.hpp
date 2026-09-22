@@ -1,12 +1,12 @@
 #pragma once
 
 #include <cerrno>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 
 #include <dirent.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #include <unistd.h>
 
 #include <ESPressio_Persistence.hpp>
@@ -36,7 +36,7 @@ namespace ESPressio::Persistence::EspIdf {
                 Framework::PropertyValue<RenameSupport, Support::Supported>,
                 Framework::PropertyValue<AppendSupport, Support::Supported>,
                 Framework::PropertyValue<WriteFileAtSupport, Support::Supported>,
-                Framework::PropertyValue<FileCapacityReportingSupport, Support::Supported>,
+                Framework::PropertyValue<FileCapacityReportingSupport, Support::Unsupported>,
                 Framework::PropertyValue<FileInvocationConcurrency, InvocationConcurrency::CallerSerialized>,
                 Framework::PropertyValue<FileFailurePreservation, FailurePreservation::MayModify>,
                 Framework::PropertyValue<FileInterruptionAtomicity, InterruptionAtomicity::None>,
@@ -348,10 +348,6 @@ namespace ESPressio::Persistence::EspIdf {
                 const auto IsDirectory = Entry->d_type == DT_DIR;
                 StorageSize FileSize{};
 
-                if (!IsDirectory) {
-                    Facts |= static_cast<std::uint8_t>(FileEnumerationEntryFact::FileSizeIsKnown);
-                }
-
                 const FileEnumerationEntry Observation{
                     Detail::PersistenceProviderAccess::MakeTextView(
                         static_cast<const char*>(NameBuffer.Address),
@@ -480,26 +476,6 @@ namespace ESPressio::Persistence::EspIdf {
             return Written == Source.Size && FlushResult == 0 && CloseResult == 0 ? FileWriteAtStatus::Succeeded : FileWriteAtStatus::IoFailure;
         }
 
-        /// Reports total and currently available capacity for the mounted VFS allocation domain.
-        [[nodiscard]] CapacityQueryResult GetFileStorageCapacity() const noexcept {
-            char NativePath[NativePathCapacity];
-
-            if (!MakeRootPath(NativePath)) {
-                return {CapacityQueryStatus::NotReady, StorageSize{}, StorageSize{}};
-            }
-
-            struct statvfs Information {};
-
-            if (statvfs(NativePath, &Information) != 0) {
-                return {CapacityQueryStatus::IoFailure, StorageSize{}, StorageSize{}};
-            }
-
-            return {
-                CapacityQueryStatus::Succeeded,
-                StorageSize{static_cast<std::uint64_t>(Information.f_blocks) * Information.f_frsize},
-                StorageSize{static_cast<std::uint64_t>(Information.f_bavail) * Information.f_frsize}
-            };
-        }
 
     };
 
