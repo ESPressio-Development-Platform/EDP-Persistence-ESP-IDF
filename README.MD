@@ -38,7 +38,9 @@ python3 tests/run_tests.py
 
 The runner creates an isolated temporary project and compiles `tests/ContractCompile.cpp` against the real platform SDK and real sibling EDP contract repositories.
 
-ESP-IDF discovery is deliberately self-contained. The runner checks an explicit `--idf-path`, `IDF_PATH`, an explicit `--idf-py`, `idf.py` already on `PATH`, conventional `~/esp/esp-idf` and `~/esp-idf` locations, versioned `~/esp/*/esp-idf` and `~/.espressif/*/esp-idf` installations, common development roots, and the PlatformIO `framework-espidf` package. When a normal ESP-IDF `export.sh` is available, the runner activates that environment itself before invoking `idf.py`.
+ESP-IDF discovery is deliberately self-contained. The runner checks an explicit `--idf-path`, `IDF_PATH`, an explicit `--idf-py`, `idf.py` already on `PATH`, conventional `~/esp/esp-idf` and `~/esp-idf` locations, versioned `~/esp/*/esp-idf` and `~/.espressif/*/esp-idf` installations, common development roots, and the PlatformIO `framework-espidf` package.
+
+A standalone ESP-IDF installation is activated through its own `export.sh` before `idf.py` is invoked. A PlatformIO-owned `framework-espidf` package is handled differently: the runner creates an isolated PlatformIO ESP-IDF project and invokes the discovered PlatformIO Core so PlatformIO supplies its own Python/toolchain/CMake/`sdkconfig` environment rather than incorrectly treating the framework package as a standalone Espressif installation.
 
 Missing prerequisites are reported separately so an unavailable ESP-IDF installation is not conflated with missing sibling EDP repositories.
 
@@ -48,4 +50,6 @@ Useful diagnostic options:
 python3 tests/run_tests.py --verbose
 python3 tests/run_tests.py --keep-build
 python3 tests/run_tests.py --idf-path /path/to/esp-idf
+python3 tests/run_tests.py --platformio /path/to/platformio
+python3 tests/run_tests.py --platformio-home /path/to/.platformio
 ```
