@@ -38,7 +38,7 @@ The pure ESP-IDF variant is self-contained:
 - both providers write, read and remove data;
 - the key/value path also verifies a present zero-length value.
 
-The VFS binding profiles deliberately use conservative `Restart` retention. The FAT paths are declared case-insensitive. The Arduino SD profile is removable; the internal-flash ESP-IDF profile is fixed.
+The VFS binding profiles deliberately use conservative `Restart` retention. The FAT paths are declared case-insensitive. The Arduino SD profile is removable; the internal-flash ESP-IDF profile is fixed. Both FAT-backed demo bindings explicitly advertise `ConcurrentReads`, matching the documented thread-safe FATFS substrate; arbitrary VFS bindings remain `CallerSerialized` unless their profile opts into a stronger guarantee.
 
 See [../../docs/BUILDING.MD](../../docs/BUILDING.MD) for the exact C++20 baseline and PIOArduino guidance for Arduino-facing builds.
 
