@@ -36,4 +36,16 @@ From this repository root, with sibling `EDP-Persistence` and `EDP-System` check
 python3 tests/run_tests.py
 ```
 
-The runner creates an isolated temporary project and compiles `tests/ContractCompile.cpp` against the real platform SDK and real sibling EDP contract repositories. Use `--keep-build` to retain the generated project for diagnosis.
+The runner creates an isolated temporary project and compiles `tests/ContractCompile.cpp` against the real platform SDK and real sibling EDP contract repositories.
+
+ESP-IDF discovery is deliberately self-contained. The runner checks an explicit `--idf-path`, `IDF_PATH`, an explicit `--idf-py`, `idf.py` already on `PATH`, conventional `~/esp/esp-idf` and `~/esp-idf` locations, versioned `~/esp/*/esp-idf` and `~/.espressif/*/esp-idf` installations, common development roots, and the PlatformIO `framework-espidf` package. When a normal ESP-IDF `export.sh` is available, the runner activates that environment itself before invoking `idf.py`.
+
+Missing prerequisites are reported separately so an unavailable ESP-IDF installation is not conflated with missing sibling EDP repositories.
+
+Useful diagnostic options:
+
+```bash
+python3 tests/run_tests.py --verbose
+python3 tests/run_tests.py --keep-build
+python3 tests/run_tests.py --idf-path /path/to/esp-idf
+```
