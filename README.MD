@@ -9,12 +9,18 @@ Concrete ESP-IDF providers for the EDP-Persistence contract.
 
 `TBindingTag` gives independently selectable logical bindings distinct Composition provider types.
 
+## Documentation
+
+- [Concrete provider contracts](./docs/PROVIDERS.MD) — provider semantics, lifecycle, ownership, memory, failure guarantees and Composition integration.
+
 ## Dependencies
 
 - EDP-Persistence-ESP-IDF
   - EDP-Persistence
     - EDP-System
   - ESP-IDF
+
+[Dependency graph](./DEPENDENCY_GRAPH.MD)
 
 ## VFS binding profile
 
