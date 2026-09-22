@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <ESPressio_Persistence.hpp>
+#include <memory/ByteOperationsContract.hpp>
 
 namespace ESPressio::Persistence::EspIdf {
 
@@ -33,19 +34,37 @@ namespace ESPressio::Persistence::EspIdf {
     >
     struct VfsBindingProfile final {
 
+        /// Commit-boundary retention guaranteed by the mounted filesystem.
         static constexpr RetentionLevel Retention = TRetention;
+
+        /// Case-sensitivity semantics guaranteed for paths.
         static constexpr TextCaseSensitivity CaseSensitivity = TCaseSensitivity;
+
+        /// Whether the backing medium can be removed while the application is running.
         static constexpr MediaRemovability Removability = TRemovability;
+
+        /// Maximum complete provider-relative path accepted by the binding.
         static constexpr std::size_t MaximumPathBytes = TMaximumPathBytes;
+
+        /// Maximum individual path segment accepted by the binding.
         static constexpr std::size_t MaximumPathSegmentBytes = TMaximumPathSegmentBytes;
+
+        /// Maximum logical file size supported by the binding.
         static constexpr StorageSize MaximumFileSize{TMaximumFileSize};
 
     };
 
 
-    /// TBindingTag distinguishes independently selectable ESP-IDF VFS roots in Composition.
-    /// TBindingProfile declares the substrate guarantees supplied by the already-mounted hierarchical filesystem.
-    template<class TBindingTag, class TBindingProfile>
+    /// Adapts one already-mounted ESP-IDF VFS root to the EDP FileStorage contract.
+    ///
+    /// @tparam TBindingTag Distinguishes independently selectable logical VFS bindings.
+    /// @tparam TBindingProfile Declares the semantic guarantees of the mounted filesystem substrate.
+    /// @tparam TByteOperationsProvider Supplies EDP-Memory raw byte-copy operations used by the adapter.
+    template<
+        class TBindingTag,
+        class TBindingProfile,
+        class TByteOperationsProvider
+    >
     class VfsFileStorage final : public Framework::Provider<
         Domain,
         Framework::Provides<
@@ -82,6 +101,11 @@ namespace ESPressio::Persistence::EspIdf {
     private:
 
         static_assert(
+            TByteOperationsProvider::CompositionCapabilities::template Contains<ESPressio::Memory::ByteOperations>,
+            "ESP-IDF VfsFileStorage requires an EDP-Memory ByteOperations provider"
+        );
+
+        static_assert(
             TBindingProfile::MaximumPathBytes > 0U &&
             TBindingProfile::MaximumPathBytes <= 255U,
             "ESP-IDF VfsFileStorage binding path limit must be between 1 and 255 bytes"
@@ -101,10 +125,26 @@ namespace ESPressio::Persistence::EspIdf {
         /// Maximum native path assembled by this provider.
         static constexpr std::size_t NativePathCapacity = 512U;
 
-        // Bound VFS root.
+        /// Result of assembling one provider-native path.
+        enum class NativePathStatus : std::uint8_t {
+            Succeeded = 0U,
+            PathNotRepresentable = 1U
+        };
+
+        /// Result of flushing and closing one mutated file at its advertised retention boundary.
+        enum class FileMutationCommitStatus : std::uint8_t {
+            Succeeded = 0U,
+            IoFailure = 1U
+        };
+
+
+        // Bound dependencies.
 
         /// Non-owning null-terminated VFS base path supplied by Bootstrap.
         const char* BasePath_;
+
+        /// Non-owning EDP-Memory byte-operation provider used for bounded raw copies.
+        const TByteOperationsProvider* ByteOperations_;
 
         /// Reports whether a caller-supplied base path leaves room for every advertised EDP path.
         [[nodiscard]] static bool IsBasePathRepresentable(const char* BasePath) noexcept {
@@ -142,58 +182,58 @@ namespace ESPressio::Persistence::EspIdf {
         }
 
         /// Builds a native path below BasePath_ without allocating.
-        [[nodiscard]] bool MakeNativePath(
+        [[nodiscard]] NativePathStatus MakeNativePath(
             FilePathView Path,
             char (&Buffer)[NativePathCapacity]
         ) const noexcept {
             if (BasePath_ == nullptr || !IsPathRepresentable(Path)) {
-                return false;
+                return NativePathStatus::PathNotRepresentable;
             }
 
             const auto BaseLength = std::strlen(BasePath_);
 
             if (BaseLength + 1U + Path.Size() + 1U > NativePathCapacity) {
-                return false;
+                return NativePathStatus::PathNotRepresentable;
             }
 
-            std::memcpy(
+            ByteOperations_->CopyBytes(
                 Buffer,
                 BasePath_,
                 BaseLength
             );
             Buffer[BaseLength] = '/';
-            std::memcpy(
+            ByteOperations_->CopyBytes(
                 Buffer + BaseLength + 1U,
                 Path.Data(),
                 Path.Size()
             );
             Buffer[BaseLength + 1U + Path.Size()] = '\0';
-            return true;
+            return NativePathStatus::Succeeded;
         }
 
         /// Builds the native path for provider root.
-        [[nodiscard]] bool MakeRootPath(char (&Buffer)[NativePathCapacity]) const noexcept {
+        [[nodiscard]] NativePathStatus MakeRootPath(char (&Buffer)[NativePathCapacity]) const noexcept {
             if (BasePath_ == nullptr) {
-                return false;
+                return NativePathStatus::PathNotRepresentable;
             }
 
             const auto Length = std::strlen(BasePath_);
 
             if (Length + 1U > NativePathCapacity) {
-                return false;
+                return NativePathStatus::PathNotRepresentable;
             }
 
-            std::memcpy(
+            ByteOperations_->CopyBytes(
                 Buffer,
                 BasePath_,
                 Length + 1U
             );
-            return true;
+            return NativePathStatus::Succeeded;
         }
 
 
         /// Flushes one mutated file through the retention boundary advertised by the binding profile.
-        [[nodiscard]] static bool CommitFileMutation(std::FILE* File) noexcept {
+        [[nodiscard]] static FileMutationCommitStatus CommitFileMutation(std::FILE* File) noexcept {
             const auto FlushResult = std::fflush(File);
             auto SyncResult = 0;
 
@@ -204,14 +244,20 @@ namespace ESPressio::Persistence::EspIdf {
 
             const auto CloseResult = std::fclose(File);
 
-            return FlushResult == 0 && SyncResult == 0 && CloseResult == 0;
+            return FlushResult == 0 && SyncResult == 0 && CloseResult == 0
+                ? FileMutationCommitStatus::Succeeded
+                : FileMutationCommitStatus::IoFailure;
         }
 
     public:
 
-        /// Constructs a provider over an already-mounted VFS base path.
-        explicit VfsFileStorage(const char* BasePath) noexcept
-            : BasePath_(IsBasePathRepresentable(BasePath) ? BasePath : nullptr) {}
+        /// Constructs a provider over an already-mounted VFS base path and ByteOperations provider.
+        VfsFileStorage(
+            const char* BasePath,
+            const TByteOperationsProvider& ByteOperations
+        ) noexcept
+            : BasePath_(IsBasePathRepresentable(BasePath) ? BasePath : nullptr),
+              ByteOperations_(&ByteOperations) {}
 
         /// Reports whether a VFS base path is bound.
         [[nodiscard]] bool IsFileStorageReady() const noexcept {
@@ -222,7 +268,10 @@ namespace ESPressio::Persistence::EspIdf {
         [[nodiscard]] FileSizeResult GetFileSize(FilePathView Path) const noexcept {
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return {FileSizeStatus::PathNotRepresentable, StorageSize{}};
             }
 
@@ -253,7 +302,10 @@ namespace ESPressio::Persistence::EspIdf {
         ) const noexcept {
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return {FileReadStatus::PathNotRepresentable, 0U, 0U, StorageSize{}};
             }
 
@@ -331,7 +383,10 @@ namespace ESPressio::Persistence::EspIdf {
 
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return FileReplaceStatus::PathNotRepresentable;
             }
 
@@ -364,16 +419,19 @@ namespace ESPressio::Persistence::EspIdf {
                 Source.Size,
                 File
             );
-            const auto Committed = CommitFileMutation(File);
+            const auto CommitStatus = CommitFileMutation(File);
 
-            return Written == Source.Size && Committed ? FileReplaceStatus::Succeeded : FileReplaceStatus::IoFailure;
+            return Written == Source.Size && CommitStatus == FileMutationCommitStatus::Succeeded ? FileReplaceStatus::Succeeded : FileReplaceStatus::IoFailure;
         }
 
         /// Removes one regular file.
         [[nodiscard]] FileRemoveStatus RemoveFile(FilePathView Path) noexcept {
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return FileRemoveStatus::PathNotRepresentable;
             }
 
@@ -400,7 +458,10 @@ namespace ESPressio::Persistence::EspIdf {
         [[nodiscard]] DirectoryCreateStatus CreateDirectory(FilePathView Path) noexcept {
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return DirectoryCreateStatus::PathNotRepresentable;
             }
 
@@ -429,7 +490,10 @@ namespace ESPressio::Persistence::EspIdf {
         [[nodiscard]] DirectoryRemoveStatus RemoveDirectory(FilePathView Path) noexcept {
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return DirectoryRemoveStatus::PathNotRepresentable;
             }
 
@@ -458,10 +522,15 @@ namespace ESPressio::Persistence::EspIdf {
             char NativePath[NativePathCapacity];
 
             if (Directory.IsRoot()) {
-                if (!MakeRootPath(NativePath)) {
+                if (MakeRootPath(
+                    NativePath
+                ) != NativePathStatus::Succeeded) {
                     return {FileEnumerationStatus::NotReady, StorageSize{}};
                 }
-            } else if (!MakeNativePath(Directory.Path(), NativePath)) {
+            } else if (MakeNativePath(
+                Directory.Path(),
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return {FileEnumerationStatus::PathNotRepresentable, StorageSize{}};
             }
 
@@ -474,7 +543,15 @@ namespace ESPressio::Persistence::EspIdf {
             std::uint64_t Visited = 0U;
 
             while (auto* Entry = readdir(Handle)) {
-                if (std::strcmp(Entry->d_name, ".") == 0 || std::strcmp(Entry->d_name, "..") == 0) {
+                const bool IsCurrentDirectory =
+                    Entry->d_name[0] == '.' &&
+                    Entry->d_name[1] == '\0';
+                const bool IsParentDirectory =
+                    Entry->d_name[0] == '.' &&
+                    Entry->d_name[1] == '.' &&
+                    Entry->d_name[2] == '\0';
+
+                if (IsCurrentDirectory || IsParentDirectory) {
                     continue;
                 }
 
@@ -486,7 +563,7 @@ namespace ESPressio::Persistence::EspIdf {
                 }
 
                 if (DeliveredSize != 0U) {
-                    std::memcpy(
+                    ByteOperations_->CopyBytes(
                         NameBuffer.Address,
                         Entry->d_name,
                         DeliveredSize
@@ -511,13 +588,13 @@ namespace ESPressio::Persistence::EspIdf {
                         return {FileEnumerationStatus::IoFailure, StorageSize{Visited}};
                     }
 
-                    std::memcpy(
+                    ByteOperations_->CopyBytes(
                         EntryPath,
                         NativePath,
                         DirectoryLength
                     );
                     EntryPath[DirectoryLength] = '/';
-                    std::memcpy(
+                    ByteOperations_->CopyBytes(
                         EntryPath + DirectoryLength + 1U,
                         Entry->d_name,
                         EntryLength + 1U
@@ -566,7 +643,14 @@ namespace ESPressio::Persistence::EspIdf {
             char NativeSource[NativePathCapacity];
             char NativeDestination[NativePathCapacity];
 
-            if (!MakeNativePath(Source, NativeSource) || !MakeNativePath(Destination, NativeDestination)) {
+            if (MakeNativePath(
+                Source,
+                NativeSource
+            ) != NativePathStatus::Succeeded ||
+                MakeNativePath(
+                    Destination,
+                    NativeDestination
+                ) != NativePathStatus::Succeeded) {
                 return FileRenameStatus::PathNotRepresentable;
             }
 
@@ -601,7 +685,10 @@ namespace ESPressio::Persistence::EspIdf {
         ) noexcept {
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return FileAppendStatus::PathNotRepresentable;
             }
 
@@ -634,8 +721,8 @@ namespace ESPressio::Persistence::EspIdf {
             }
 
             const auto Written = Source.Size == 0U ? 0U : std::fwrite(Source.Address, 1U, Source.Size, File);
-            const auto Committed = CommitFileMutation(File);
-            return Written == Source.Size && Committed ? FileAppendStatus::Succeeded : FileAppendStatus::IoFailure;
+            const auto CommitStatus = CommitFileMutation(File);
+            return Written == Source.Size && CommitStatus == FileMutationCommitStatus::Succeeded ? FileAppendStatus::Succeeded : FileAppendStatus::IoFailure;
         }
 
         /// Replaces bytes within an existing file extent.
@@ -660,7 +747,10 @@ namespace ESPressio::Persistence::EspIdf {
 
             char NativePath[NativePathCapacity];
 
-            if (!MakeNativePath(Path, NativePath)) {
+            if (MakeNativePath(
+                Path,
+                NativePath
+            ) != NativePathStatus::Succeeded) {
                 return FileWriteAtStatus::PathNotRepresentable;
             }
 
@@ -678,8 +768,8 @@ namespace ESPressio::Persistence::EspIdf {
             }
 
             const auto Written = Source.Size == 0U ? 0U : std::fwrite(Source.Address, 1U, Source.Size, File);
-            const auto Committed = CommitFileMutation(File);
-            return Written == Source.Size && Committed ? FileWriteAtStatus::Succeeded : FileWriteAtStatus::IoFailure;
+            const auto CommitStatus = CommitFileMutation(File);
+            return Written == Source.Size && CommitStatus == FileMutationCommitStatus::Succeeded ? FileWriteAtStatus::Succeeded : FileWriteAtStatus::IoFailure;
         }
 
 
