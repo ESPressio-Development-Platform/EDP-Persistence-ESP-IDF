@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Compile the concrete ESP-IDF Persistence provider contract."""
 
 from pathlib import Path
 import argparse
@@ -11,8 +12,10 @@ import tempfile
 
 
 def sibling(root, *names):
+    """Find a sibling repository by one of the supplied directory names."""
     for name in names:
         candidate = root.parent / name
+
         if candidate.is_dir():
             return candidate.resolve()
 
@@ -20,6 +23,7 @@ def sibling(root, *names):
 
 
 def existing_directory(value):
+    """Resolve an explicitly supplied directory when it exists."""
     if not value:
         return None
 
@@ -31,7 +35,17 @@ def existing_directory(value):
     return None
 
 
+def first_existing(*paths):
+    """Return the first existing regular file or directory."""
+    for path in paths:
+        if path is not None and path.exists():
+            return path.resolve()
+
+    return None
+
+
 def idf_root_from_idf_py(idf_py):
+    """Recover an ESP-IDF installation root from tools/idf.py."""
     if not idf_py:
         return None
 
@@ -54,21 +68,24 @@ def discover_idf_root(
     explicit_idf_py=None,
     platformio_home=None,
 ):
+    """Discover either a standalone or PlatformIO-owned ESP-IDF tree."""
     candidates = []
 
     if explicit_path:
         candidates.append(Path(explicit_path).expanduser())
 
     environment_path = os.environ.get("IDF_PATH")
+
     if environment_path:
         candidates.append(Path(environment_path).expanduser())
 
     explicit_root = idf_root_from_idf_py(explicit_idf_py)
+
     if explicit_root:
         candidates.append(explicit_root)
 
-    path_idf_py = shutil.which("idf.py")
-    path_root = idf_root_from_idf_py(path_idf_py)
+    path_root = idf_root_from_idf_py(shutil.which("idf.py"))
+
     if path_root:
         candidates.append(path_root)
 
@@ -86,16 +103,12 @@ def discover_idf_root(
         )
     )
 
-    versioned_roots = (
+    for versioned_root in (
         home / "esp",
         home / ".espressif",
-    )
-
-    for versioned_root in versioned_roots:
-        if not versioned_root.is_dir():
-            continue
-
-        candidates.extend(versioned_root.glob("*/esp-idf"))
+    ):
+        if versioned_root.is_dir():
+            candidates.extend(versioned_root.glob("*/esp-idf"))
 
     candidates.append(
         (platformio_home or (home / ".platformio"))
@@ -123,6 +136,7 @@ def discover_idf_root(
 
 
 def is_platformio_framework(idf_root, platformio_home):
+    """Report whether ESP-IDF is owned by this PlatformIO package tree."""
     try:
         return idf_root.resolve() == (
             platformio_home / "packages" / "framework-espidf"
@@ -131,38 +145,250 @@ def is_platformio_framework(idf_root, platformio_home):
         return False
 
 
-def discover_platformio(explicit_platformio, platformio_home):
-    if explicit_platformio:
-        candidate = Path(explicit_platformio).expanduser()
+def discover_xtensa_compiler(platformio_home, explicit_compiler=None):
+    """Find the installed ESP32 Xtensa C++ compiler."""
+    if explicit_compiler:
+        candidate = Path(explicit_compiler).expanduser()
 
         if candidate.is_file():
             return candidate.resolve()
 
-    for command in ("platformio", "pio"):
-        candidate = shutil.which(command)
+    packages = platformio_home / "packages"
 
-        if candidate:
-            return Path(candidate).resolve()
+    return first_existing(
+        packages
+        / "toolchain-xtensa-esp-elf"
+        / "bin"
+        / "xtensa-esp32-elf-g++",
+        packages
+        / "toolchain-xtensa-esp-elf"
+        / "bin"
+        / "xtensa-esp-elf-g++",
+        packages
+        / "toolchain-xtensa-esp32"
+        / "bin"
+        / "xtensa-esp32-elf-g++",
+    )
 
-    for candidate in (
-        platformio_home / "penv" / "bin" / "platformio",
-        platformio_home / "penv" / "bin" / "pio",
-    ):
-        if candidate.is_file():
-            return candidate.resolve()
 
-    return None
+def idf_public_include_directories(idf_root):
+    """Collect bounded public ESP-IDF component include roots."""
+    components = idf_root / "components"
+
+    if not components.is_dir():
+        return []
+
+    include_directories = [
+        path
+        for path in components.rglob("include")
+        if path.is_dir()
+    ]
+
+    # Some target-specific public headers live beneath directories such as
+    # components/soc/esp32/include, which rglob("include") already captures.
+    # Keep a stable deterministic order and remove aliases/duplicates.
+    resolved = []
+    seen = set()
+
+    for include in sorted(include_directories):
+        try:
+            canonical = include.resolve()
+        except OSError:
+            continue
+
+        if canonical in seen:
+            continue
+
+        seen.add(canonical)
+        resolved.append(canonical)
+
+    return resolved
+
+
+def write_compile_probe_sdkconfig(config_directory):
+    """Write the minimal target configuration required by public IDF headers."""
+    config_directory.mkdir(parents=True, exist_ok=True)
+    (config_directory / "sdkconfig.h").write_text(
+        """#pragma once
+
+#define CONFIG_IDF_TARGET_ESP32 1
+#define CONFIG_IDF_TARGET "esp32"
+#define CONFIG_COMPILER_OPTIMIZATION_PERF 0
+#define CONFIG_COMPILER_STATIC_ANALYZER 0
+"""
+    )
+
+
+def compile_platformio_framework(
+    root,
+    persistence,
+    system,
+    idf_root,
+    platformio_home,
+    compiler,
+    build,
+    verbose,
+):
+    """Compile the contract directly against PlatformIO's installed ESP-IDF."""
+    include_directories = idf_public_include_directories(idf_root)
+
+    if not include_directories:
+        print(
+            "ERROR: no ESP-IDF component include directories were found "
+            f"under {idf_root / 'components'}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    config_directory = build / "config"
+    write_compile_probe_sdkconfig(config_directory)
+
+    object_file = build / "ContractCompile.o"
+    command = [
+        str(compiler),
+        "-std=gnu++20",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-DESP_PLATFORM",
+        "-DIDF_TARGET_ESP32",
+        "-c",
+        str(root / "tests" / "ContractCompile.cpp"),
+        "-o",
+        str(object_file),
+        "-I",
+        str(config_directory),
+        "-I",
+        str(root / "src"),
+        "-I",
+        str(persistence / "src"),
+        "-I",
+        str(system / "src"),
+    ]
+
+    for include in include_directories:
+        command.extend(("-isystem", str(include)))
+
+    print(f"ESP-IDF environment: PlatformIO package, direct compiler")
+    print(f"Compiler: {compiler}")
+    print(f"ESP-IDF public include roots: {len(include_directories)}")
+
+    if verbose:
+        print(" ".join(shlex.quote(value) for value in command))
+
+    result = subprocess.run(
+        command,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        print(
+            "\nFAIL: ESP-IDF concrete contract did not compile.",
+            file=sys.stderr,
+        )
+
+    return result.returncode
+
+
+def compile_standalone_idf(
+    root,
+    persistence,
+    system,
+    idf_root,
+    build,
+    verbose,
+):
+    """Compile the contract through a normal standalone ESP-IDF installation."""
+    main_dir = build / "main"
+    main_dir.mkdir()
+
+    shutil.copy2(
+        root / "tests" / "ContractCompile.cpp",
+        main_dir / "ContractCompile.cpp",
+    )
+
+    (build / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
+        "project(edp_persistence_contract)\n"
+    )
+
+    (main_dir / "CMakeLists.txt").write_text(
+        """idf_component_register(SRCS "ContractCompile.cpp" INCLUDE_DIRS "." REQUIRES nvs_flash)
+target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
+target_include_directories(${COMPONENT_LIB} PRIVATE
+    "%s"
+    "%s"
+    "%s"
+)
+"""
+        % (
+            root / "src",
+            persistence / "src",
+            system / "src",
+        )
+    )
+
+    idf_py = idf_root / "tools" / "idf.py"
+    export_script = idf_root / "export.sh"
+
+    print("ESP-IDF environment: standalone")
+    print(f"ESP-IDF idf.py: {idf_py}")
+
+    if export_script.is_file():
+        command = (
+            f"source {shlex.quote(str(export_script))} >/dev/null "
+            f"&& idf.py -C {shlex.quote(str(build))} build"
+        )
+
+        if verbose:
+            print(f"bash -lc {shlex.quote(command)}")
+
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            check=False,
+        )
+    else:
+        environment = os.environ.copy()
+        environment["IDF_PATH"] = str(idf_root)
+        command = [
+            sys.executable,
+            str(idf_py),
+            "-C",
+            str(build),
+            "build",
+        ]
+
+        if verbose:
+            print(" ".join(shlex.quote(value) for value in command))
+
+        result = subprocess.run(
+            command,
+            check=False,
+            env=environment,
+        )
+
+    if result.returncode != 0:
+        print(
+            "\nFAIL: ESP-IDF concrete contract did not compile.",
+            file=sys.stderr,
+        )
+
+    return result.returncode
 
 
 def print_missing_dependency(name, detail):
+    """Print one missing compile prerequisite."""
     print(f"  - {name}: {detail}", file=sys.stderr)
 
 
 def main():
+    """Run the concrete ESP-IDF compile-time contract probe."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--idf-path")
     parser.add_argument("--idf-py")
-    parser.add_argument("--platformio")
+    parser.add_argument("--compiler")
     parser.add_argument("--platformio-home")
     parser.add_argument("--persistence")
     parser.add_argument("--system")
@@ -195,8 +421,8 @@ def main():
         idf_root is not None
         and is_platformio_framework(idf_root, platformio_home)
     )
-    platformio = (
-        discover_platformio(args.platformio, platformio_home)
+    compiler = (
+        discover_xtensa_compiler(platformio_home, args.compiler)
         if platformio_framework
         else None
     )
@@ -223,17 +449,18 @@ def main():
         missing.append(
             (
                 "ESP-IDF",
-                "no installation containing tools/idf.py was found; activate ESP-IDF, set IDF_PATH, or pass --idf-path /path/to/esp-idf",
+                "no installation containing tools/idf.py was found; "
+                "activate ESP-IDF, set IDF_PATH, or pass --idf-path /path/to/esp-idf",
             )
         )
 
-    if platformio_framework and platformio is None:
+    if platformio_framework and compiler is None:
         missing.append(
             (
-                "PlatformIO",
-                "framework-espidf was found under the PlatformIO package root, "
-                "but neither platformio/pio on PATH nor the PlatformIO penv "
-                "executable was found; pass --platformio /path/to/platformio",
+                "Xtensa ESP32 C++ compiler",
+                "PlatformIO-owned framework-espidf was found, but no compatible "
+                "toolchain compiler was found under the PlatformIO package root; "
+                "pass --compiler /path/to/compiler",
             )
         )
 
@@ -243,70 +470,12 @@ def main():
         for name, detail in missing:
             print_missing_dependency(name, detail)
 
-        print(
-            "\nESP-IDF discovery checks IDF_PATH, idf.py on PATH, "
-            "~/esp/esp-idf, versioned ~/esp/*/esp-idf and "
-            "~/.espressif/*/esp-idf installations, the PlatformIO "
-            "framework-espidf package, and common development roots.",
-            file=sys.stderr,
-        )
         return 2
-
-    idf_py = idf_root / "tools" / "idf.py"
-    export_script = idf_root / "export.sh"
 
     build = Path(tempfile.mkdtemp(prefix="edp-persistence-idf-tests-"))
 
     try:
-        main_dir = build / "main"
-        main_dir.mkdir()
-        shutil.copy2(
-            root / "tests" / "ContractCompile.cpp",
-            main_dir / "ContractCompile.cpp",
-        )
-
-        (build / "CMakeLists.txt").write_text(
-            "cmake_minimum_required(VERSION 3.16)\n"
-            "include($ENV{IDF_PATH}/tools/cmake/project.cmake)\n"
-            "project(edp_persistence_contract)\n"
-        )
-
-        (main_dir / "CMakeLists.txt").write_text(
-            """idf_component_register(SRCS "ContractCompile.cpp" INCLUDE_DIRS "." REQUIRES nvs_flash)
-target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
-target_include_directories(${COMPONENT_LIB} PRIVATE
-    "%s"
-    "%s"
-    "%s"
-)
-"""
-            % (
-                root / "src",
-                persistence / "src",
-                system / "src",
-            )
-        )
-
-        if platformio_framework:
-            (build / "platformio.ini").write_text(
-                """[platformio]
-src_dir = main
-
-[env:esp32dev]
-platform = espressif32
-board = esp32dev
-framework = espidf
-"""
-            )
-
         print(f"ESP-IDF root: {idf_root}")
-        print(f"ESP-IDF idf.py: {idf_py}")
-
-        if platformio_framework:
-            print("ESP-IDF environment: PlatformIO")
-            print(f"PlatformIO executable: {platformio}")
-        else:
-            print("ESP-IDF environment: standalone")
         print(f"EDP-Persistence-ESP-IDF: {root}")
         print(f"EDP-Persistence: {persistence}")
         print(f"EDP-System: {system}")
@@ -314,64 +483,28 @@ framework = espidf
         print("\n[1/1] Compiling ESP-IDF concrete contract...")
 
         if platformio_framework:
-            command = [
-                str(platformio),
-                "run",
-                "--project-dir",
-                str(build),
-                "--environment",
-                "esp32dev",
-            ]
-
-            if args.verbose:
-                print(" ".join(shlex.quote(value) for value in command))
-
-            environment = os.environ.copy()
-            environment["PLATFORMIO_CORE_DIR"] = str(platformio_home)
-            result = subprocess.run(
-                command,
-                check=False,
-                env=environment,
-            )
-        elif export_script.is_file():
-            command = (
-                f"source {shlex.quote(str(export_script))} >/dev/null "
-                f"&& idf.py -C {shlex.quote(str(build))} build"
-            )
-
-            if args.verbose:
-                print(f"bash -lc {shlex.quote(command)}")
-
-            result = subprocess.run(
-                ["bash", "-lc", command],
-                check=False,
+            result = compile_platformio_framework(
+                root,
+                persistence,
+                system,
+                idf_root,
+                platformio_home,
+                compiler,
+                build,
+                args.verbose,
             )
         else:
-            environment = os.environ.copy()
-            environment["IDF_PATH"] = str(idf_root)
-            command = [
-                sys.executable,
-                str(idf_py),
-                "-C",
-                str(build),
-                "build",
-            ]
-
-            if args.verbose:
-                print(" ".join(shlex.quote(value) for value in command))
-
-            result = subprocess.run(
-                command,
-                check=False,
-                env=environment,
+            result = compile_standalone_idf(
+                root,
+                persistence,
+                system,
+                idf_root,
+                build,
+                args.verbose,
             )
 
-        if result.returncode != 0:
-            print(
-                "\nFAIL: ESP-IDF concrete contract did not compile.",
-                file=sys.stderr,
-            )
-            return result.returncode
+        if result != 0:
+            return result
 
         print(
             "\nPASS: ESP-IDF concrete Persistence providers compiled "
