@@ -48,12 +48,20 @@ namespace ESPressio::Persistence::EspIdf {
                 Framework::PropertyValue<ClearAllFailurePreservation, FailurePreservation::MayModify>,
                 Framework::PropertyValue<ClearAllInterruptionAtomicity, InterruptionAtomicity::None>
             >
+        >,
+        Framework::Requires<>,
+        Framework::DependsOn<
+            Framework::Need<ESPressio::Memory::ByteOperations>
         >
     > {
     private:
 
         static_assert(
-            TByteOperationsProvider::CompositionCapabilities::template Contains<ESPressio::Memory::ByteOperations>,
+            sizeof(
+                ESPressio::Memory::Detail::ByteOperationsProviderTraits<
+                    TByteOperationsProvider
+                >
+            ) > 0U,
             "ESP-IDF NvsKeyValueStorage requires an EDP-Memory ByteOperations provider"
         );
 
