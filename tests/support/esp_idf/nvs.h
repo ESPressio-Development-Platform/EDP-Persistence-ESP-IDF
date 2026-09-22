@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
-using esp_err_t = int;
+#include <esp_err.h>
+
 using nvs_handle_t = std::uint32_t;
 
-inline constexpr esp_err_t ESP_OK = 0;
 inline constexpr esp_err_t ESP_ERR_NVS_NOT_FOUND = 0x1102;
 inline constexpr esp_err_t ESP_ERR_NVS_INVALID_HANDLE = 0x1107;
 inline constexpr esp_err_t ESP_ERR_NVS_NOT_ENOUGH_SPACE = 0x1105;
