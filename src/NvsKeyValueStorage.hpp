@@ -334,7 +334,12 @@ namespace ESPressio::Persistence::EspIdf {
                 ? static_cast<const void*>(&EmptyValueStorage)
                 : Source.Address;
 
-            if (nvs_set_blob(Handle_, NativeKey, Storage, Source.Size) != ESP_OK) {
+            if (nvs_set_blob(
+                Handle_,
+                NativeKey,
+                Storage,
+                Source.Size
+            ) != ESP_OK) {
                 return KeyValueStoreStatus::IoFailure;
             }
 
