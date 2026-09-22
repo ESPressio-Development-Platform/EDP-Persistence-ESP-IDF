@@ -40,7 +40,7 @@ Only select values that are true for the actual mounted VFS backend. A profile c
 
 ## Lifecycle
 
-The application initializes NVS and mounts the selected VFS implementation before provider use. `NvsKeyValueStorage::Open()` opens an existing initialized partition/namespace and `Close()` releases its handle. `VfsFileStorage` stores a non-owning base-path pointer whose lifetime must dominate the provider.
+The application initializes NVS and mounts the selected VFS implementation before provider use. The VFS mount must remain active for the provider's complete use lifetime. `NvsKeyValueStorage::Open()` opens an existing initialized partition/namespace and `Close()` releases its handle; that namespace is dedicated to this opaque-blob provider while it is in use. `VfsFileStorage` stores a non-owning base-path pointer whose lifetime must dominate the provider.
 
 ## Concurrency and memory
 
