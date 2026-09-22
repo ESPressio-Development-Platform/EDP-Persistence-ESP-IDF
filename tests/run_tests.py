@@ -49,7 +49,11 @@ def idf_root_from_idf_py(idf_py):
     return root if (root / "tools" / "idf.py").is_file() else None
 
 
-def discover_idf_root(explicit_path=None, explicit_idf_py=None):
+def discover_idf_root(
+    explicit_path=None,
+    explicit_idf_py=None,
+    platformio_home=None,
+):
     candidates = []
 
     if explicit_path:
@@ -94,7 +98,9 @@ def discover_idf_root(explicit_path=None, explicit_idf_py=None):
         candidates.extend(versioned_root.glob("*/esp-idf"))
 
     candidates.append(
-        home / ".platformio" / "packages" / "framework-espidf"
+        (platformio_home or (home / ".platformio"))
+        / "packages"
+        / "framework-espidf"
     )
 
     seen = set()
@@ -183,6 +189,7 @@ def main():
     idf_root = discover_idf_root(
         explicit_path=args.idf_path,
         explicit_idf_py=args.idf_py,
+        platformio_home=platformio_home,
     )
     platformio_framework = (
         idf_root is not None
@@ -319,9 +326,12 @@ framework = espidf
             if args.verbose:
                 print(" ".join(shlex.quote(value) for value in command))
 
+            environment = os.environ.copy()
+            environment["PLATFORMIO_CORE_DIR"] = str(platformio_home)
             result = subprocess.run(
                 command,
                 check=False,
+                env=environment,
             )
         elif export_script.is_file():
             command = (
