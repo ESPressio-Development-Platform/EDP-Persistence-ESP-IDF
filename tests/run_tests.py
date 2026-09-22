@@ -172,37 +172,32 @@ def discover_xtensa_compiler(platformio_home, explicit_compiler=None):
 
 
 def idf_public_include_directories(idf_root):
-    """Collect bounded public ESP-IDF component include roots."""
+    """Return only the ESP-IDF public headers consumed by this provider.
+
+    The direct compile probe must not add every ESP-IDF component include
+    directory. Host-only compatibility components such as components/linux
+    intentionally provide headers named sys/cdefs.h and would shadow the
+    Xtensa/Newlib target headers when placed on a raw compiler command line.
+    """
     components = idf_root / "components"
+    required = (
+        components / "nvs_flash" / "include",
+        components / "esp_common" / "include",
+    )
 
-    if not components.is_dir():
-        return []
-
-    include_directories = [
+    missing = [
         path
-        for path in components.rglob("include")
-        if path.is_dir()
+        for path in required
+        if not path.is_dir()
     ]
 
-    # Some target-specific public headers live beneath directories such as
-    # components/soc/esp32/include, which rglob("include") already captures.
-    # Keep a stable deterministic order and remove aliases/duplicates.
-    resolved = []
-    seen = set()
+    if missing:
+        return []
 
-    for include in sorted(include_directories):
-        try:
-            canonical = include.resolve()
-        except OSError:
-            continue
-
-        if canonical in seen:
-            continue
-
-        seen.add(canonical)
-        resolved.append(canonical)
-
-    return resolved
+    return [
+        path.resolve()
+        for path in required
+    ]
 
 
 def write_compile_probe_sdkconfig(config_directory):
@@ -234,8 +229,9 @@ def compile_platformio_framework(
 
     if not include_directories:
         print(
-            "ERROR: no ESP-IDF component include directories were found "
-            f"under {idf_root / 'components'}.",
+            "ERROR: required ESP-IDF public include directories were not found "
+            "(expected components/nvs_flash/include and "
+            "components/esp_common/include).",
             file=sys.stderr,
         )
         return 2
@@ -272,7 +268,10 @@ def compile_platformio_framework(
 
     print(f"ESP-IDF environment: PlatformIO package, direct compiler")
     print(f"Compiler: {compiler}")
-    print(f"ESP-IDF public include roots: {len(include_directories)}")
+    print(
+        "ESP-IDF public include roots: "
+        + ", ".join(str(path) for path in include_directories)
+    )
 
     if verbose:
         print(" ".join(shlex.quote(value) for value in command))
