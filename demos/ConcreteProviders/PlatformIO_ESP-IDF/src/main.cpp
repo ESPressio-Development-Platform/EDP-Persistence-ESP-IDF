@@ -6,17 +6,31 @@
 #include <nvs_flash.h>
 #include <wear_levelling.h>
 
+#include <memory/ByteOperationsProvider.hpp>
+
 #include <ESPressio_Persistence_ESP_IDF.hpp>
 
 namespace {
 
     using namespace ESPressio::Persistence;
 
+    /// VFS root used by the internal-flash FAT filesystem.
     constexpr char BasePath[] = "/edpfs";
+
+    /// Partition label used by the demo FAT filesystem.
     constexpr char PartitionLabel[] = "storage";
 
+    /// Logical Composition identity used by this demo.
     struct DemoBinding final {};
 
+
+    // Demo provider types.
+
+    /// Standard C/C++ ByteOperations concrete selected by the demo.
+    using DemoByteOperationsProvider =
+        ESPressio::Platform::Portable::Memory::ByteOperationsProvider;
+
+    /// Conservative semantic profile for the fixed internal FAT filesystem.
     using DemoFileProfile = EspIdf::VfsBindingProfile<
         RetentionLevel::Restart,
         TextCaseSensitivity::CaseInsensitive,
@@ -26,34 +40,55 @@ namespace {
         4096ULL
     >;
 
+    /// Concrete ESP-IDF VFS provider used by the demo.
     using DemoFileStorage = EspIdf::VfsFileStorage<
         DemoBinding,
-        DemoFileProfile
+        DemoFileProfile,
+        DemoByteOperationsProvider
     >;
 
+    /// Concrete ESP-IDF NVS provider used by the demo.
     using DemoKeyValueStorage =
-        EspIdf::NvsKeyValueStorage<DemoBinding>;
+        EspIdf::NvsKeyValueStorage<
+            DemoBinding,
+            DemoByteOperationsProvider
+        >;
 
+
+    /// Result of one demo operation group.
+    enum class DemoStatus : std::uint8_t {
+        Succeeded = 0U,
+        Failed = 1U
+    };
+
+
+    // Runtime resources.
+
+    /// Wear-levelling handle owned by the mounted FAT filesystem.
     wl_handle_t WearLevellingHandle = WL_INVALID_HANDLE;
 
 
-    [[nodiscard]] bool InitializeNvs() {
+    /// Initializes the default NVS partition, erasing it only for the documented recoverable states.
+    [[nodiscard]] DemoStatus InitializeNvs() {
         auto Result = nvs_flash_init();
 
         if (Result == ESP_ERR_NVS_NO_FREE_PAGES ||
             Result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
             if (nvs_flash_erase() != ESP_OK) {
-                return false;
+                return DemoStatus::Failed;
             }
 
             Result = nvs_flash_init();
         }
 
-        return Result == ESP_OK;
+        return Result == ESP_OK
+            ? DemoStatus::Succeeded
+            : DemoStatus::Failed;
     }
 
 
-    [[nodiscard]] bool MountFileSystem() {
+    /// Mounts the dedicated internal-flash FAT filesystem used by the FileStorage demo.
+    [[nodiscard]] DemoStatus MountFileSystem() {
         esp_vfs_fat_mount_config_t Configuration{};
         Configuration.format_if_mount_failed = true;
         Configuration.max_files = 4U;
@@ -64,39 +99,58 @@ namespace {
             PartitionLabel,
             &Configuration,
             &WearLevellingHandle
-        ) == ESP_OK;
+        ) == ESP_OK
+            ? DemoStatus::Succeeded
+            : DemoStatus::Failed;
     }
 
 
-    [[nodiscard]] bool RunFileStorageDemo() {
-        DemoFileStorage Storage(BasePath);
+    /// Exercises VfsFileStorage against the mounted internal-flash FAT filesystem.
+    [[nodiscard]] DemoStatus RunFileStorageDemo(
+        DemoByteOperationsProvider& ByteOperations
+    ) {
+        DemoFileStorage Storage(
+            BasePath,
+            ByteOperations
+        );
 
         if (!Storage.IsFileStorageReady()) {
             std::printf("FileStorage: VFS base path is not ready\n");
-            return false;
+            return DemoStatus::Failed;
         }
 
         constexpr auto Path = FilePathView::Validate("edp-demo.bin");
         static_assert(Path.Status == FilePathValidationStatus::Succeeded);
 
-        const std::uint8_t Payload[] = {0x31U, 0x32U, 0x33U, 0x34U};
+        const std::uint8_t Payload[] = {
+            0x31U,
+            0x32U,
+            0x33U,
+            0x34U
+        };
 
         if (Storage.ReplaceFile(
             Path.Value,
-            SourceBufferView{Payload, sizeof(Payload)}
+            SourceBufferView{
+                Payload,
+                sizeof(Payload)
+            }
         ) != FileReplaceStatus::Succeeded) {
             std::printf("FileStorage: replace failed\n");
-            return false;
+            return DemoStatus::Failed;
         }
 
         std::uint8_t Buffer[sizeof(Payload)]{};
         const auto Read = Storage.ReadFileAt(
             Path.Value,
             StorageOffset{},
-            DestinationBufferView{Buffer, sizeof(Buffer)}
+            DestinationBufferView{
+                Buffer,
+                sizeof(Buffer)
+            }
         );
 
-        const bool ReadMatches =
+        const bool IsReadMatch =
             Read.Status == FileReadStatus::Succeeded &&
             Read.BytesTransferred == sizeof(Payload) &&
             Buffer[0] == Payload[0] &&
@@ -104,99 +158,126 @@ namespace {
             Buffer[2] == Payload[2] &&
             Buffer[3] == Payload[3];
 
-        const auto Remove = Storage.RemoveFile(Path.Value);
+        const auto RemoveStatus = Storage.RemoveFile(Path.Value);
 
-        if (!ReadMatches || Remove != FileRemoveStatus::Succeeded) {
+        if (!IsReadMatch || RemoveStatus != FileRemoveStatus::Succeeded) {
             std::printf("FileStorage: verification failed\n");
-            return false;
+            return DemoStatus::Failed;
         }
 
         std::printf("FileStorage: PASS\n");
-        return true;
+        return DemoStatus::Succeeded;
     }
 
 
-    [[nodiscard]] bool RunKeyValueStorageDemo() {
-        DemoKeyValueStorage Storage;
+    /// Exercises NvsKeyValueStorage against the initialized default NVS partition.
+    [[nodiscard]] DemoStatus RunKeyValueStorageDemo(
+        DemoByteOperationsProvider& ByteOperations
+    ) {
+        DemoKeyValueStorage Storage(ByteOperations);
 
-        if (!Storage.Open("edp-demo")) {
+        if (Storage.Open(
+            "edp-demo"
+        ) != EspIdf::NvsOpenStatus::Succeeded) {
             std::printf("KeyValueStorage: NVS open failed\n");
-            return false;
+            return DemoStatus::Failed;
         }
 
         constexpr auto Key = KeyView::Validate("payload");
         static_assert(Key.Status == KeyValidationStatus::Succeeded);
 
-        const std::uint8_t Payload[] = {0x71U, 0x72U, 0x73U};
+        const std::uint8_t Payload[] = {
+            0x71U,
+            0x72U,
+            0x73U
+        };
 
         if (Storage.StoreValue(
             Key.Value,
-            SourceBufferView{Payload, sizeof(Payload)}
+            SourceBufferView{
+                Payload,
+                sizeof(Payload)
+            }
         ) != KeyValueStoreStatus::Succeeded) {
             std::printf("KeyValueStorage: store failed\n");
             Storage.Close();
-            return false;
+            return DemoStatus::Failed;
         }
 
         std::uint8_t Buffer[sizeof(Payload)]{};
         const auto Read = Storage.ReadValue(
             Key.Value,
-            DestinationBufferView{Buffer, sizeof(Buffer)}
+            DestinationBufferView{
+                Buffer,
+                sizeof(Buffer)
+            }
         );
 
-        const bool ReadMatches =
+        const bool IsReadMatch =
             Read.Status == KeyValueReadStatus::Succeeded &&
             Read.BytesTransferred == sizeof(Payload) &&
             Buffer[0] == Payload[0] &&
             Buffer[1] == Payload[1] &&
             Buffer[2] == Payload[2];
 
-        const auto EmptyStore = Storage.StoreValue(
+        const auto EmptyStoreStatus = Storage.StoreValue(
             Key.Value,
-            SourceBufferView{nullptr, 0U}
+            SourceBufferView{
+                nullptr,
+                0U
+            }
         );
         const auto EmptySize = Storage.GetValueSize(Key.Value);
-        const auto Remove = Storage.RemoveKey(Key.Value);
+        const auto RemoveStatus = Storage.RemoveKey(Key.Value);
 
         Storage.Close();
 
-        const bool EmptyValueWorks =
-            EmptyStore == KeyValueStoreStatus::Succeeded &&
+        const bool IsEmptyValueValid =
+            EmptyStoreStatus == KeyValueStoreStatus::Succeeded &&
             EmptySize.Status == KeyValueSizeStatus::Succeeded &&
             EmptySize.Size.RawValue == 0U;
 
-        if (!ReadMatches ||
-            !EmptyValueWorks ||
-            Remove != KeyValueRemoveStatus::Succeeded) {
+        if (!IsReadMatch ||
+            !IsEmptyValueValid ||
+            RemoveStatus != KeyValueRemoveStatus::Succeeded) {
             std::printf("KeyValueStorage: verification failed\n");
-            return false;
+            return DemoStatus::Failed;
         }
 
         std::printf("KeyValueStorage: PASS\n");
-        return true;
+        return DemoStatus::Succeeded;
     }
 
 } // namespace
 
 
 extern "C" void app_main() {
-    const bool NvsReady = InitializeNvs();
-    const bool FileSystemReady = MountFileSystem();
+    DemoByteOperationsProvider ByteOperations;
 
-    const bool FilePassed =
-        FileSystemReady && RunFileStorageDemo();
-    const bool KeyValuePassed =
-        NvsReady && RunKeyValueStorageDemo();
+    const auto NvsStatus = InitializeNvs();
+    const auto FileSystemStatus = MountFileSystem();
 
-    if (FileSystemReady) {
-        esp_vfs_fat_spiflash_unmount_rw_wl(
-            BasePath,
-            WearLevellingHandle
+    const auto FileStatus =
+        FileSystemStatus == DemoStatus::Succeeded
+            ? RunFileStorageDemo(ByteOperations)
+            : DemoStatus::Failed;
+    const auto KeyValueStatus =
+        NvsStatus == DemoStatus::Succeeded
+            ? RunKeyValueStorageDemo(ByteOperations)
+            : DemoStatus::Failed;
+
+    if (FileSystemStatus == DemoStatus::Succeeded) {
+        static_cast<void>(
+            esp_vfs_fat_spiflash_unmount_rw_wl(
+                BasePath,
+                WearLevellingHandle
+            )
         );
     }
 
     std::printf(
-        FilePassed && KeyValuePassed
+        FileStatus == DemoStatus::Succeeded &&
+        KeyValueStatus == DemoStatus::Succeeded
             ? "EDP-Persistence-ESP-IDF demo: PASS\n"
             : "EDP-Persistence-ESP-IDF demo: FAIL\n"
     );
