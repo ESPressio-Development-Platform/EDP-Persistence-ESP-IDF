@@ -388,6 +388,7 @@ def main():
     parser.add_argument("--idf-path")
     parser.add_argument("--idf-py")
     parser.add_argument("--compiler")
+    parser.add_argument("--host-compiler")
     parser.add_argument("--platformio-home")
     parser.add_argument("--persistence")
     parser.add_argument("--system")
@@ -423,6 +424,17 @@ def main():
     compiler = (
         discover_xtensa_compiler(platformio_home, args.compiler)
         if platformio_framework
+        else None
+    )
+    host_compiler_value = (
+        args.host_compiler
+        or shutil.which("c++")
+        or shutil.which("clang++")
+        or shutil.which("g++")
+    )
+    host_compiler = (
+        Path(host_compiler_value).expanduser().resolve()
+        if host_compiler_value
         else None
     )
 
@@ -463,6 +475,15 @@ def main():
             )
         )
 
+    if host_compiler is None:
+        missing.append(
+            (
+                "host C++ compiler",
+                "no c++, clang++, or g++ executable was found; "
+                "pass --host-compiler /path/to/compiler",
+            )
+        )
+
     if missing:
         print("ERROR: missing required compile dependencies:", file=sys.stderr)
 
@@ -475,11 +496,63 @@ def main():
 
     try:
         print(f"ESP-IDF root: {idf_root}")
+        print(f"Host compiler: {host_compiler}")
         print(f"EDP-Persistence-ESP-IDF: {root}")
         print(f"EDP-Persistence: {persistence}")
         print(f"EDP-System: {system}")
         print(f"Build directory: {build}")
-        print("\n[1/1] Compiling ESP-IDF concrete contract...")
+
+        behavior_executable = build / "ProviderBehaviorTests"
+        behavior_command = [
+            str(host_compiler),
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            "-I",
+            str(root / "tests" / "support" / "esp_idf"),
+            "-I",
+            str(root / "src"),
+            "-I",
+            str(persistence / "src"),
+            "-I",
+            str(system / "src"),
+            str(root / "tests" / "ProviderBehaviorTests.cpp"),
+            "-o",
+            str(behavior_executable),
+        ]
+
+        print("\n[1/2] Compiling and running concrete provider behavior tests...")
+
+        if args.verbose:
+            print(" ".join(shlex.quote(value) for value in behavior_command))
+
+        result = subprocess.run(
+            behavior_command,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            print(
+                "\nFAIL: ESP-IDF concrete provider behavior tests did not compile.",
+                file=sys.stderr,
+            )
+            return result.returncode
+
+        result = subprocess.run(
+            [str(behavior_executable)],
+            check=False,
+        )
+
+        if result.returncode != 0:
+            print(
+                "\nFAIL: ESP-IDF concrete provider behavior tests failed.",
+                file=sys.stderr,
+            )
+            return result.returncode
+
+        print("\n[2/2] Compiling ESP-IDF concrete contract...")
 
         if platformio_framework:
             result = compile_platformio_framework(
@@ -506,8 +579,8 @@ def main():
             return result
 
         print(
-            "\nPASS: ESP-IDF concrete Persistence providers compiled "
-            "and satisfied the abstract contract."
+            "\nPASS: ESP-IDF concrete provider behavior tests passed and "
+            "the providers compiled against the real SDK contract."
         )
         return 0
     finally:
