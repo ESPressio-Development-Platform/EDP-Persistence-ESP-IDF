@@ -1,8 +1,13 @@
+#include <memory/ByteOperationsProvider.hpp>
+
 #include <ESPressio_Persistence_ESP_IDF.hpp>
 
 namespace {
 
     struct ContractBinding final {};
+
+    using ContractByteOperationsProvider =
+        ESPressio::Platform::Portable::Memory::ByteOperationsProvider;
 
     using ContractVfsProfile =
         ESPressio::Persistence::EspIdf::VfsBindingProfile<
@@ -17,10 +22,17 @@ namespace {
 
     static_assert([]() consteval {
         ESPressio::Persistence::ValidatePersistenceProvider<
-            ESPressio::Persistence::EspIdf::VfsFileStorage<ContractBinding, ContractVfsProfile>
+            ESPressio::Persistence::EspIdf::VfsFileStorage<
+                ContractBinding,
+                ContractVfsProfile,
+                ContractByteOperationsProvider
+            >
         >();
         ESPressio::Persistence::ValidatePersistenceProvider<
-            ESPressio::Persistence::EspIdf::NvsKeyValueStorage<ContractBinding>
+            ESPressio::Persistence::EspIdf::NvsKeyValueStorage<
+                ContractBinding,
+                ContractByteOperationsProvider
+            >
         >();
         return true;
     }());
