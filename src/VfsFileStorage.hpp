@@ -17,7 +17,7 @@ namespace ESPressio::Persistence::EspIdf {
     namespace Framework = ESPressio::System::CompositionFramework;
 
 
-    namespace Detail {
+    namespace BindingDetail {
 
         /// Returns the binding's explicit invocation-concurrency guarantee when present.
         ///
@@ -33,7 +33,7 @@ namespace ESPressio::Persistence::EspIdf {
             }
         }
 
-    } // namespace Detail
+    } // namespace BindingDetail
 
 
     /// Declares the compile-time guarantees of one hierarchical ESP-IDF VFS binding.
@@ -118,7 +118,7 @@ namespace ESPressio::Persistence::EspIdf {
                 Framework::PropertyValue<FileCapacityReportingSupport, Support::Unsupported>,
                 Framework::PropertyValue<
                     FileInvocationConcurrency,
-                    Detail::BindingConcurrency<TBindingProfile>()
+                    BindingDetail::BindingConcurrency<TBindingProfile>()
                 >,
                 Framework::PropertyValue<FileFailurePreservation, FailurePreservation::MayModify>,
                 Framework::PropertyValue<FileInterruptionAtomicity, InterruptionAtomicity::None>,
