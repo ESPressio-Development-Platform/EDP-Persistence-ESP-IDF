@@ -191,6 +191,22 @@ namespace ESPressio::Persistence::EspIdf {
             return true;
         }
 
+
+        /// Flushes one mutated file through the retention boundary advertised by the binding profile.
+        [[nodiscard]] static bool CommitFileMutation(std::FILE* File) noexcept {
+            const auto FlushResult = std::fflush(File);
+            auto SyncResult = 0;
+
+            if constexpr (TBindingProfile::Retention == RetentionLevel::PowerLoss) {
+                const auto Descriptor = ::fileno(File);
+                SyncResult = Descriptor < 0 ? -1 : ::fsync(Descriptor);
+            }
+
+            const auto CloseResult = std::fclose(File);
+
+            return FlushResult == 0 && SyncResult == 0 && CloseResult == 0;
+        }
+
     public:
 
         /// Constructs a provider over an already-mounted VFS base path.
@@ -220,7 +236,13 @@ namespace ESPressio::Persistence::EspIdf {
                 return {FileSizeStatus::NotFound, StorageSize{}};
             }
 
-            return {FileSizeStatus::Succeeded, StorageSize{static_cast<std::uint64_t>(Information.st_size)}};
+            const auto Size = static_cast<std::uint64_t>(Information.st_size);
+
+            if (Size > TBindingProfile::MaximumFileSize.RawValue) {
+                return {FileSizeStatus::ProviderFailure, StorageSize{}};
+            }
+
+            return {FileSizeStatus::Succeeded, StorageSize{Size}};
         }
 
         /// Reads a bounded range from one regular file.
@@ -257,6 +279,11 @@ namespace ESPressio::Persistence::EspIdf {
             }
 
             const auto Size = static_cast<std::uint64_t>(End);
+
+            if (Size > TBindingProfile::MaximumFileSize.RawValue) {
+                std::fclose(File);
+                return {FileReadStatus::ProviderFailure, 0U, 0U, StorageSize{}};
+            }
 
             if (Offset.RawValue > Size || Offset.RawValue > static_cast<std::uint64_t>(LONG_MAX)) {
                 std::fclose(File);
@@ -298,6 +325,10 @@ namespace ESPressio::Persistence::EspIdf {
             FilePathView Path,
             SourceBufferView Source
         ) noexcept {
+            if (Source.Size > TBindingProfile::MaximumFileSize.RawValue) {
+                return FileReplaceStatus::FileTooLarge;
+            }
+
             char NativePath[NativePathCapacity];
 
             if (!MakeNativePath(Path, NativePath)) {
@@ -319,10 +350,9 @@ namespace ESPressio::Persistence::EspIdf {
                 Source.Size,
                 File
             );
-            const auto FlushResult = std::fflush(File);
-            const auto CloseResult = std::fclose(File);
+            const auto Committed = CommitFileMutation(File);
 
-            return Written == Source.Size && FlushResult == 0 && CloseResult == 0 ? FileReplaceStatus::Succeeded : FileReplaceStatus::IoFailure;
+            return Written == Source.Size && Committed ? FileReplaceStatus::Succeeded : FileReplaceStatus::IoFailure;
         }
 
         /// Removes one regular file.
@@ -496,6 +526,19 @@ namespace ESPressio::Persistence::EspIdf {
                 return FileAppendStatus::NotFound;
             }
 
+            if (!S_ISREG(Information.st_mode)) {
+                return FileAppendStatus::EntryTypeConflict;
+            }
+
+            const auto ExistingSize = static_cast<std::uint64_t>(Information.st_size);
+
+            if (
+                ExistingSize > TBindingProfile::MaximumFileSize.RawValue ||
+                Source.Size > TBindingProfile::MaximumFileSize.RawValue - ExistingSize
+            ) {
+                return FileAppendStatus::FileTooLarge;
+            }
+
             auto* File = std::fopen(
                 NativePath,
                 "ab"
@@ -506,9 +549,8 @@ namespace ESPressio::Persistence::EspIdf {
             }
 
             const auto Written = Source.Size == 0U ? 0U : std::fwrite(Source.Address, 1U, Source.Size, File);
-            const auto FlushResult = std::fflush(File);
-            const auto CloseResult = std::fclose(File);
-            return Written == Source.Size && FlushResult == 0 && CloseResult == 0 ? FileAppendStatus::Succeeded : FileAppendStatus::IoFailure;
+            const auto Committed = CommitFileMutation(File);
+            return Written == Source.Size && Committed ? FileAppendStatus::Succeeded : FileAppendStatus::IoFailure;
         }
 
         /// Replaces bytes within an existing file extent.
@@ -551,9 +593,8 @@ namespace ESPressio::Persistence::EspIdf {
             }
 
             const auto Written = Source.Size == 0U ? 0U : std::fwrite(Source.Address, 1U, Source.Size, File);
-            const auto FlushResult = std::fflush(File);
-            const auto CloseResult = std::fclose(File);
-            return Written == Source.Size && FlushResult == 0 && CloseResult == 0 ? FileWriteAtStatus::Succeeded : FileWriteAtStatus::IoFailure;
+            const auto Committed = CommitFileMutation(File);
+            return Written == Source.Size && Committed ? FileWriteAtStatus::Succeeded : FileWriteAtStatus::IoFailure;
         }
 
 
