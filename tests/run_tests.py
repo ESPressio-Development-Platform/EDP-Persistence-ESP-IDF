@@ -73,7 +73,6 @@ def discover_idf_root(explicit_path=None, explicit_idf_py=None):
         (
             home / "esp" / "esp-idf",
             home / "esp-idf",
-            home / ".platformio" / "packages" / "framework-espidf",
             home / "Projects" / "esp-idf",
             home / "Development" / "esp-idf",
             home / "Developer" / "esp-idf",
@@ -81,6 +80,21 @@ def discover_idf_root(explicit_path=None, explicit_idf_py=None):
             home / "Source" / "esp-idf",
             home / "DevProjects" / "esp-idf",
         )
+    )
+
+    versioned_roots = (
+        home / "esp",
+        home / ".espressif",
+    )
+
+    for versioned_root in versioned_roots:
+        if not versioned_root.is_dir():
+            continue
+
+        candidates.extend(versioned_root.glob("*/esp-idf"))
+
+    candidates.append(
+        home / ".platformio" / "packages" / "framework-espidf"
     )
 
     seen = set()
@@ -166,8 +180,9 @@ def main():
 
         print(
             "\nESP-IDF discovery checks IDF_PATH, idf.py on PATH, "
-            "~/esp/esp-idf, ~/esp-idf, the PlatformIO framework-espidf package, "
-            "and common development roots.",
+            "~/esp/esp-idf, versioned ~/esp/*/esp-idf and "
+            "~/.espressif/*/esp-idf installations, the PlatformIO "
+            "framework-espidf package, and common development roots.",
             file=sys.stderr,
         )
         return 2
