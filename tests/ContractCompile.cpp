@@ -83,9 +83,11 @@ namespace {
         ConcurrentReadFileStorageProvider
     >;
 
-    /// Consumer requirement equivalent to EDP-Localisation FilePackSource's concurrency gate.
-    using ConcurrentReadFileStorageNeed = Framework::Need<
+    /// Same-domain Requirement equivalent to EDP-Localisation FilePackSource's concurrency gate.
+    using ConcurrentReadFileStorageRequirement = Framework::Requirement<
         ESPressio::Persistence::FileStorage,
+        Framework::RequirementScope::SameDomain,
+        Framework::ExactlyProviders<1U>,
         Framework::AtLeast<
             ESPressio::Persistence::FileInvocationConcurrency,
             ESPressio::Persistence::InvocationConcurrency::ConcurrentReads
@@ -94,8 +96,9 @@ namespace {
 
     /// Provider selected only if the advertised binding guarantee meets ConcurrentReads.
     using SelectedConcurrentReadProvider =
-        typename ConcurrentReadPersistenceComposition::template ProviderSatisfying<
-            ConcurrentReadFileStorageNeed
+        typename ConcurrentReadPersistenceComposition::template Select<
+            ConcurrentReadFileStorageRequirement,
+            Framework::SelectUnique
         >;
 
     /// Complete architecture proving the ConcurrentReads provider's Memory dependency is satisfied.
