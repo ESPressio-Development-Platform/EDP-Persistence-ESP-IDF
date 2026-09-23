@@ -99,7 +99,7 @@ namespace ESPressio::Persistence::EspIdf {
     >
     class VfsFileStorage final : public Framework::Provider<
         Domain,
-        Framework::Provides<
+        Framework::Offers<
             Framework::Offer<
                 FileStorage,
                 Framework::PropertyValue<FileAccessMode, AccessMode::ReadWrite>,
@@ -132,9 +132,12 @@ namespace ESPressio::Persistence::EspIdf {
                 Framework::PropertyValue<WriteFileAtInterruptionAtomicity, InterruptionAtomicity::None>
             >
         >,
-        Framework::Requires<>,
-        Framework::DependsOn<
-            Framework::Need<ESPressio::Memory::ByteOperations>
+        Framework::Contract<
+            Framework::Requirement<
+                ESPressio::Memory::ByteOperations,
+                Framework::RequirementScope::ExternalDomain,
+                Framework::ExactlyProviders<1U>
+            >
         >
     > {
     private:
