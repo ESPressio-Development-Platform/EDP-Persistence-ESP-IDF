@@ -8,3 +8,5 @@
 - [Composition](Composition)
 - [Resources / Lifecycle / Concurrency](Resources-Lifecycle-Concurrency)
 - [Build / Test / Source](Build-Test-Source)
+- [Dependency Contracts](Dependency-Contracts)
+- [Reference Index](Reference-Index)
