@@ -102,3 +102,27 @@ All binary/readback/UART evidence remains private on RPI400 under
 /srv/espressio/scratch/gpt6-lfs-requal-20261023-2144/
 private-bounded-write-POR-20261023/ and related runs directory.
 No generic FileStorage interruption-atomicity upgrade is made.
+
+## Extended VDD-OFF diagnostic repetition (16.1 seconds)
+
+Test RPI400 20261023T221520-b4a3dc8c ran the same
+WRITE_ENTER gen24 trigger with environment EDP_LFS_OFF_HOLD_S=15.0.
+Controller confirmed actual GPIO17 OFF for 16.131 seconds including
+status/command overhead. Strict POR gate failed: ESP32 ROM recorded
+SDIO_RESET (0x6), application reported ESP_RST_SDIO=10 rather than
+ESP_RST_POWERON=1, and app correctly halted NOT_ACTUAL_VDD_CUT.
+Do NOT claim POR-qualified hardware PASS.
+
+Independent private postcut 589824-byte physical flash partition
+readback run 20261023T222042-c4bdd146 PASS exit0, image SHA256
+cb0398b23111fdbce9559096ee54a29e4660811c1fe1066b9af6bcb6c7abee7b.
+Offline LittleFS extraction found exactly g0023.bin and g0024.bin,
+each 8192 bytes with the expected generation byte repeated throughout,
+and seed.txt EDP1. Both protected records survived this experiment;
+the difference in reset classification is unresolved.
+
+The host monitor now supports EDP_LFS_OFF_HOLD_S to explicitly
+control and log the supply OFF interval. This is a test control only.
+The provider continues to advertise conservative Restart/None
+atomicity properties. The prior POR-qualified reclaim PASS and
+write-stage WDT/SDIO reset failures remain separately classified.

@@ -159,3 +159,14 @@ found valid g0023.bin and g0024.bin (8192 bytes each), no protected
 record loss observed. This is robustness evidence, NOT a strict
 POR-qualified pass, native erase-phase certification or permission
 to upgrade generic FileStorage Restart/None guarantees.
+
+A further GPIO17 WRITE_ENTER gen24 test with 15-second requested
+relay-OFF interval (16.131 seconds observed), run
+20261023T221520-b4a3dc8c, correctly FAILed the strict POR gate:
+native ROM SDIO_RESET and app ESP_RST_SDIO=10. Independent physical
+flash partition readback 20261023T222042-c4bdd146 PASS, SHA256
+cb0398b23111fdbce9559096ee54a29e4660811c1fe1066bcb6c7abee7b,
+recovered complete CRC-independent generation-specific 8192-byte
+g0023.bin and g0024.bin. The reset-reason variability persisted
+despite longer OFF duration. Keep this as independent retention
+evidence, not a POR-certified qualification.

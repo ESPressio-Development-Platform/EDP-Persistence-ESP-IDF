@@ -68,7 +68,7 @@ def run(destination):
                         command("status")
                         # User-confirmed relay cuts VDD; generous hold permits
                         # full rail discharge. No reset-line toggling is sent.
-                        time.sleep(8.0)
+                        time.sleep(float(os.environ.get('EDP_LFS_OFF_HOLD_S','8.0')))
                         command("status")
                         command("power-on")
                         print(f"HOST|POWER_OFF_S={time.monotonic()-t:.3f}",flush=True)
