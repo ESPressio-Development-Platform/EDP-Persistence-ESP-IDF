@@ -11,3 +11,5 @@
 - [Dependency Contracts](Dependency-Contracts)
 - [Reference Index](Reference-Index)
 - [Compiler Definitions](Compiler-Definitions)
+
+- [LittleFS VFS mount reference](Reference-LittleFsVfsMount)

@@ -7,3 +7,5 @@
 | `src/VfsFileStorage.hpp` | PUBLIC PROVIDER / EXTENSION API | 32 | [open](Reference-VfsFileStorage) |
 
 > Source baseline: `d3f5d43da09083bc81b0664f219025f08ce2561c`.
+
+- [LittleFsVfsMount](Reference-LittleFsVfsMount) — optional, non-destructive vendor LittleFS VFS mount and conservative reused FileStorage binding.

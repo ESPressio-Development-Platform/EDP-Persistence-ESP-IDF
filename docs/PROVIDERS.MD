@@ -119,3 +119,13 @@ The runner requires sibling EDP-Persistence, EDP-Memory, EDP-Platform, EDP-Platf
 ## Build baseline
 
 See [BUILDING.MD](./BUILDING.MD) for the mandatory C++20 baseline, PIOArduino recommendation for Arduino-facing demo/consumer builds, and ESP-IDF build guidance.
+
+## Optional LittleFS mount and VFS profile (initial conservative form)
+
+See [LITTLEFS-VFS-BINDING.MD](LITTLEFS-VFS-BINDING.MD).
+`LittleFsVfsMount` registers only an already-provisioned LittleFS
+partition using the vendor `esp_vfs_littlefs_register`; its
+`format_if_mount_failed` flag is **always false**. The existing
+`VfsFileStorage` remains responsible for all FileStorage operations.
+The named profile currently advertises Restart retention and None
+interruption atomicity, not strong PowerLoss durability.

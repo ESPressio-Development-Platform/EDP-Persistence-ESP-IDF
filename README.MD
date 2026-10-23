@@ -110,3 +110,31 @@ The runner validates:
 For PlatformIO-owned ESP-IDF packages, the final stage uses the already-established direct target-compiler probe so local PlatformIO package-manager/upload failures do not masquerade as provider compiler failures.
 
 Useful explicit overrides include `--persistence`, `--memory`, `--platform`, `--platform-portable`, `--system`, `--idf-path`, `--compiler`, and `--platformio-home`.
+
+## Optional LittleFS VFS lifecycle binding (2026-10-23)
+
+`LittleFsVfsMount` (optional upstream joltwallet/littlefs SDK component)
+owns explicit non-destructive mount/unmount; it will NEVER format or
+repair an unrecognized partition. `LittleFsConservativeFileStorage`
+is solely a named alias to the existing `VfsFileStorage` with
+Restart-only retention and conservative None atomicity until actual
+LittleFS/native EDLS power-loss semantics are qualified. No second
+FileStorage provider is created. For resource and lifecycle details,
+see [docs/LITTLEFS-VFS-BINDING.MD](docs/LITTLEFS-VFS-BINDING.MD).
+
+**Native durability warning (2026-10-23):** real GPIO17 VDD cut during
+existing VfsFileStorage::ReplaceFile of the same `journal.bin` recovered
+a zero-byte file after reboot (RPI400 `20261023T134754-502ed2c6`).
+The existing profile correctly advertises **no interruption atomicity**.
+Do not overwrite retained records with ReplaceFile. See
+`docs/LITTLEFS-VFS-BINDING.MD` and the separate immutable-generation
+candidate fixture. No storage property upgrade has been authorised.
+
+**Immutable-generation experimental result (2026-10-23):**
+using independent names `g0001.bin` through `g0005.bin` instead of
+overwriting a retained file, all five 8192-byte records survived a
+real GPIO17 power cut, while the unacknowledged g0006.bin recovered
+as zero bytes. RPI400 test `20261023T171847-7a7fe516` PASS exit0.
+It does NOT upgrade conservative FileStorage interruption atomicity or
+establish bounded reclamation. See the optional test fixture and
+LittleFS binding design document.

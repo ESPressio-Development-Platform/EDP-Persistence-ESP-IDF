@@ -1,0 +1,54 @@
+name: LittleFS conservative mount contracts
+on:
+  push:
+    paths:
+      - "src/LittleFsVfs*.hpp"
+      - "tests/LittleFsVfsMountTests.cpp"
+      - "tests/run-littlefs-host-tests.sh"
+      - "tests/fakes/esp_littlefs.h"
+      - ".github/workflows/littlefs-host.yml"
+  pull_request:
+jobs:
+  mount-contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: EDP-Persistence-ESP-IDF
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-Persistence
+          path: EDP-Persistence
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-Memory
+          ref: feature/logging-v1
+          path: EDP-Memory
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-System
+          path: EDP-System
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-Platform
+          path: EDP-Platform
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-Platform-Portable
+          path: EDP-Platform-Portable
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-BoundedTopology
+          path: EDP-BoundedTopology
+      - uses: actions/checkout@v4
+        with:
+          repository: ESPressio-Development-Platform/EDP-BoundedTypes
+          path: EDP-BoundedTypes
+      - name: Strict LittleFS host property and mount contracts
+        env:
+          EDP_PERSISTENCE_DEPS_ROOT: ${{ github.workspace }}
+        run: bash EDP-Persistence-ESP-IDF/tests/run-littlefs-host-tests.sh ${{ matrix.compiler }}

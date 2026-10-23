@@ -26,3 +26,14 @@ The direct ESP-IDF SDK dependency is permitted by `Policy/V2/ABSTRACTION.MD` bec
 - `EDP-Platform-Portable` — required only by the supplied tests and demos when they select the standard C/C++ `ByteOperationsProvider`. Consuming applications may supply any provider satisfying `EDP-Memory::ByteOperations` instead.
 
 No other optional library dependency is imposed by the production provider headers.
+
+## Optional LittleFS backend (2026-10-23)
+
+When and ONLY when consuming `LittleFsVfsMount.hpp`, the application
+must supply upstream `joltwallet/littlefs` ESP-IDF component.
+`LittleFsVfsBinding.hpp` uses the existing EDP-Persistence
+VfsFileStorage and EDP-Memory ByteOperations contract; no additional
+EDP mandatory dependency or reverse path is introduced. Native
+LittleFS's mount/cache/wear logic stays in the vendor component,
+not duplicated inside EDP-Persistence-ESP-IDF or EDP-Logging.
+SPIFFS and NVS existing composition guarantees remain unchanged.
