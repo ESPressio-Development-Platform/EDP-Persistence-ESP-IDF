@@ -138,3 +138,24 @@ Repeated varied-phase cuts, configured bounded reclamation, exhaustion,
 live-mount resource ceilings, ECC/error rates and native flash-wear
 budget are still required before claiming a production historical
 journal. Keep conservative Restart/None FileStorage properties.
+
+## Bounded immutable-history qualification
+
+Dedicated test-only LittleFS fixture tests create-new generation-named
+files, independent exact readback before ACK, and delayed deletion
+of each retired oldest generation. With correct UART delimiters
+and strict reset validation, native WROOM GPIO17 hard-power test
+20261023T215354-859a0db5 PASS exit0: POR reboot, protected complete
+generations 23 and 24 recovered after about 9.140 seconds VDD-off.
+This validates a bounded design candidate, not the generic FileStorage
+atomicity contract, garbage-collection phase completeness, or endurance.
+
+An alternate, differently triggered write-entry power-cut attempt,
+20261023T220026-4e76a311, did not pass the strict POR gate:
+host GPIO17 was OFF for 9.142 sec but the ROM emitted a brownout,
+external-reset and RTC watchdog sequence before ESP_RST_WDT(7).
+Independent offline physical readback PASS 20261023T220523-d88d6d99
+found valid g0023.bin and g0024.bin (8192 bytes each), no protected
+record loss observed. This is robustness evidence, NOT a strict
+POR-qualified pass, native erase-phase certification or permission
+to upgrade generic FileStorage Restart/None guarantees.
