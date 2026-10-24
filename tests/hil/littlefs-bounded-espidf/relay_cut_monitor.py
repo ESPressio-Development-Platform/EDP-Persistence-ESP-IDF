@@ -1,96 +1,194 @@
 #!/usr/bin/env python3
-"""True GPIO17 VDD cut test for bounded retention/reclamation LittleFS generations.
+"""Bounded LittleFS true VDD hard-cut qualification host.
 
-Protects every generation observed ACKed before the first cut request.
-Existing file bytes are NEVER overwritten; a partially written candidate
-after reset is allowed, but a vanished earlier acknowledged file is not.
+Electrical provenance is exclusively supplied by the user-qualified RPI400
+GPIO17 controller. Device ROM/application reset reason is diagnostic only.
+Never claim FileStorage::ReplaceFile power-loss atomicity from this test.
 """
+from __future__ import annotations
+
 import os
-import pathlib
+from pathlib import Path
 import re
 import serial
 import subprocess
 import sys
 import time
 
-CONTROL="/srv/espressio/bin/esp32-integrated"
+from powercut_qualification import PostCutEvidence
 
-def command(value):
-    r=subprocess.run([CONTROL,value],check=True,capture_output=True,text=True,timeout=12)
-    print(f"HOST|{value}|{r.stdout.strip()}",flush=True)
+CONTROL = "/srv/espressio/bin/esp32-integrated"
 
-def run(destination):
-    root=pathlib.Path(destination)
-    root.mkdir(parents=True,exist_ok=False)
-    phase=os.environ.get("EDP_LFS_CUT_STAGE","reclaim").lower()
-    if phase not in ("reclaim","write"):
+
+def command(value: str, *, expected_power: str | None = None) -> str:
+    completed = subprocess.run(
+        [CONTROL, value], check=True, capture_output=True,
+        text=True, timeout=12,
+    )
+    response = completed.stdout.strip()
+    print(f"HOST|{value}|{response}", flush=True)
+    if expected_power is not None and f"POWER={expected_power}" not in response:
+        raise RuntimeError(
+            f"{value}: expected controller POWER={expected_power}: {response}"
+        )
+    return response
+
+
+def run(destination: str) -> int:
+    evidence_path = Path(destination)
+    evidence_path.mkdir(parents=True, exist_ok=False)
+
+    stage = os.environ.get("EDP_LFS_CUT_STAGE", "reclaim").lower()
+    if stage not in {"reclaim", "write"}:
         raise ValueError("cut stage must be reclaim or write")
-    marker=(r"\|RECLAIM_ENTER\|retired=(\d+)" if phase=="reclaim"
-            else r"\|WRITE_ENTER\|gen=(\d+)")
-    threshold=22 if phase=="reclaim" else 24
-    print(f"HOST|CONFIGURED_CUT_STAGE={phase}|threshold={threshold}",flush=True)
-    ack=0
-    cut=False
-    boot=False
-    recovered=0
-    started=time.monotonic()
-    command("status")
-    command("power-on")
-    port=serial.Serial("/dev/serial0",115200,timeout=0.1)
-    pending=bytearray()
+    threshold = 22 if stage == "reclaim" else 24
+    trigger = (
+        re.compile(r"\|RECLAIM_ENTER\|retired=(\d+)")
+        if stage == "reclaim"
+        else re.compile(r"\|WRITE_ENTER\|gen=(\d+)")
+    )
+    off_hold_s = float(os.environ.get("EDP_LFS_OFF_HOLD_S", "8.0"))
+    if not (5.0 <= off_hold_s <= 60.0):
+        raise ValueError("qualification OFF hold must be within [5,60] seconds")
+
+    print(
+        f"HOST|CONFIGURED_CUT_STAGE={stage}|threshold={threshold}"
+        f"|min_off_seconds={off_hold_s}",
+        flush=True,
+    )
+    last_ack = 0
+    cut_triggered = False
+    postcut_evidence: PostCutEvidence | None = None
+    off_confirmed = False
+    on_confirmed = False
+    measured_off_s = 0.0
+    started = time.monotonic()
+
+    # The official flashing wrapper may have already powered ON and held
+    # reset; a monitor-only replay can begin powered OFF. Only actual cut
+    # OFF/ON controller witnesses are strict.
+    initial_status = command("status")
+    if "POWER=OFF" not in initial_status and "POWER=ON" not in initial_status:
+        raise RuntimeError("initial controller power state unrepresentable")
+    port = serial.Serial("/dev/serial0", 115200, timeout=0.1)
+    pending = bytearray()
     try:
         port.reset_input_buffer()
-        with (root/"serial.raw").open("wb") as raw,(root/"serial.txt").open("w",encoding="utf8") as log:
-            command("release")
-            while time.monotonic()-started<110:
-                buf=port.read(4096)
-                if not buf:continue
-                raw.write(buf);raw.flush()
-                for octet in buf:
-                    if octet!=10 and len(pending)<4095:
-                        pending.append(octet);continue
-                    line=pending.decode("utf8",errors="replace").strip()
+        with (evidence_path / "serial.raw").open("wb") as raw, (
+            evidence_path / "serial.txt"
+        ).open("w", encoding="utf8") as log:
+            command("power-on", expected_power="ON")
+            command("release", expected_power="ON")
+            while time.monotonic() - started < 110.0:
+                data = port.read(4096)
+                if not data:
+                    continue
+                raw.write(data)
+                raw.flush()
+                for octet in data:
+                    if octet != 10 and len(pending) < 4095:
+                        pending.append(octet)
+                        continue
+
+                    line = pending.decode("utf8", errors="replace").strip()
                     pending.clear()
-                    log.write(line+"\n");log.flush()
-                    if "EDP_BND|" not in line:continue
-                    line=line[line.index("EDP_BND|"):]
-                    print("UART|"+line,flush=True)
-                    if cut and "|BOOT|reset=1" in line:boot=True
-                    m=re.search(r"\|ACK\|gen=(\d+)",line)
-                    if m and not cut:ack=max(ack,int(m.group(1)))
-                    m=re.search(marker,line)
-                    if m and not cut and int(m.group(1))>=threshold:
-                        if ack<2:raise RuntimeError("expected 2 durable baseline ACKs")
-                        print(f"HOST|CUT_STAGE={phase}|CUT_AT={m.group(1)}|LAST_ACK={ack}",flush=True)
-                        cut=True
-                        command("power-off")
-                        t=time.monotonic()
-                        command("status")
-                        # User-confirmed relay cuts VDD; generous hold permits
-                        # full rail discharge. No reset-line toggling is sent.
-                        time.sleep(float(os.environ.get('EDP_LFS_OFF_HOLD_S','8.0')))
-                        command("status")
-                        command("power-on")
-                        print(f"HOST|POWER_OFF_S={time.monotonic()-t:.3f}",flush=True)
-                    m=re.search(r"\|RECOVERED\|newest=(\d+)\|older=\d+\|valid=\d+\|contiguous=1",line)
-                    if cut and m:recovered=int(m.group(1))
-                    if cut and "|PASS|TWO_RETAINED_AFTER_RECLAIM_CUT" in line:
-                        okay=boot and recovered>=ack
-                        print(f"HOST|TRUE_POWERON={boot}|LAST_ACK_BEFORE_CUT={ack}|LAST_CONTIGUOUS_RECOVERED={recovered}|PASS={okay}",flush=True)
-                        return 0 if okay else 4
-                    if "|HALT|" in line:
-                        print("HOST|FIRMWARE_HALTED=FAIL",flush=True)
+                    log.write(line + "\n")
+                    log.flush()
+                    if postcut_evidence is not None:
+                        postcut_evidence.observe(line)
+
+                    if "EDP_BND|" in line:
+                        frame = line[line.index("EDP_BND|"):]
+                        print("UART|" + frame, flush=True)
+                        if not cut_triggered:
+                            m = re.search(r"\|ACK\|gen=(\d+)", frame)
+                            if m:
+                                last_ack = max(last_ack, int(m.group(1)))
+
+                    if postcut_evidence is not None:
+                        if (
+                            postcut_evidence.replay_verified
+                            or postcut_evidence.halt_reason is not None
+                        ):
+                            verdict = postcut_evidence.verdict(
+                                ack_before_cut=last_ack,
+                                off_confirmed=off_confirmed,
+                                on_confirmed=on_confirmed,
+                                measured_off_seconds=measured_off_s,
+                                minimum_off_seconds=off_hold_s,
+                            )
+                            print(
+                                f"HOST|QUALIFICATION={verdict.classification}"
+                                f"|accepted={verdict.accepted}"
+                                f"|failure={verdict.failure}"
+                                f"|last_ack={last_ack}"
+                                f"|newest={verdict.recovered_newest}"
+                                f"|older={verdict.recovered_older}"
+                                f"|valid={verdict.recovered_count}"
+                                f"|app_reset={verdict.native_reset}"
+                                f"|rom_resets={verdict.rom_resets}"
+                                f"|off_s={measured_off_s:.3f}",
+                                flush=True,
+                            )
+                            return 0 if verdict.accepted else 4
+                        continue
+
+                    if "EDP_BND|HALT|" in line:
+                        print("HOST|PRE_CUT_FIRMWARE_HALT=FAIL", flush=True)
                         return 5
-            print(f"HOST|TIMEOUT|cut={cut}|lastAck={ack}|recovered={recovered}",flush=True)
+
+                    if not cut_triggered:
+                        m = trigger.search(line)
+                        if m and int(m.group(1)) >= threshold:
+                            if last_ack < 2:
+                                raise RuntimeError(
+                                    "not enough acknowledged baseline records"
+                                )
+                            print(
+                                f"HOST|CUT_STAGE={stage}"
+                                f"|CUT_AT={m.group(1)}"
+                                f"|LAST_ACK={last_ack}",
+                                flush=True,
+                            )
+                            cut_triggered = True
+                            command("power-off", expected_power="OFF")
+                            off_start = time.monotonic()
+                            command("status", expected_power="OFF")
+                            time.sleep(off_hold_s)
+                            command("status", expected_power="OFF")
+                            measured_off_s = time.monotonic() - off_start
+                            off_confirmed = True
+
+                            # Eliminate any UART bytes buffered before this
+                            # NEW power-on. The remainder of the already-read
+                            # data chunk is discarded by breaking this loop.
+                            port.reset_input_buffer()
+                            pending.clear()
+                            command("power-on", expected_power="ON")
+                            on_confirmed = True
+                            postcut_evidence = PostCutEvidence()
+                            print(
+                                f"HOST|POWER_OFF_S={measured_off_s:.3f}"
+                                f"|new_postcut_boot_epoch=1",
+                                flush=True,
+                            )
+                            break
+            print(
+                f"HOST|TIMEOUT|cut={cut_triggered}"
+                f"|last_ack={last_ack}|postcut={postcut_evidence is not None}",
+                flush=True,
+            )
             return 6
     finally:
         port.close()
-        command("power-off")
+        command("power-off", expected_power="OFF")
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     try:
-        if len(sys.argv)!=2:raise ValueError("private unique evidence path required")
+        if len(sys.argv) != 2:
+            raise ValueError("unique private evidence path required")
         sys.exit(run(sys.argv[1]))
-    except Exception as e:
-        print("HOST|ERROR",repr(e),flush=True)
+    except Exception as exc:
+        print(f"HOST|ERROR|{exc!r}", flush=True)
         sys.exit(9)

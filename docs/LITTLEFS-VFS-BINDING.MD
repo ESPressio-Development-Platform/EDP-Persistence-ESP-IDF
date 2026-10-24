@@ -170,3 +170,37 @@ recovered complete CRC-independent generation-specific 8192-byte
 g0023.bin and g0024.bin. The reset-reason variability persisted
 despite longer OFF duration. Keep this as independent retention
 evidence, not a POR-certified qualification.
+
+## 2026-10-24 approved electrical-cut evidence classification
+
+Per Policy/main/V2/TEST_COVERAGE section 4, a separately controller-
+verified GPIO17 VDD-OFF event qualifies as an externally verified
+power interruption without requiring ESP_RST_POWERON, provided OFF
+and ON states, hold interval, attributable new boot (all raw ROM/app
+reset reasons preserved), and complete post-boot protected-data
+validation are independently recorded. A stricter POR_CONFIRMED
+classification requires ROM+app POR evidence; WDT/SDIO classify as
+EXTERNALLY_VERIFIED_POWER_CUT only. Missing controller evidence,
+insufficient OFF interval, ambiguous boot or retained-data failure
+is a FAIL regardless of native reset reason. Old POR-gated run
+receipts are immutable; they are not retroactively converted.
+The bounded test-only fixture delegates the electrical attestation
+solely to RPI400; firmware reports reset diagnostics and file replay.
+This does not strengthen the generic FileStorage provider's native
+Restart/None mutation guarantees, nor qualify arbitrary GC and flash
+wear.
+
+The new independent host/device evidence separation was physically
+validated in RPI400 WROOM native HIL on 2026-10-24: monitored GPIO17
+WRITE_ENTER gen24 hard-power cut 20261024T093434-c39effc2 PASS0,
+controller OFF 8.273s, new raw ROM+app POR, recovered complete g23
+and g24 (plus not-yet-reclaimed g22), qualified POR_CONFIRMED by host
+only; independent raw LittleFS partition readback
+20261024T093534-7f3f8754 PASS0 found three complete 8192-byte
+generation-checked immutable files. Firmware emits only
+RESET_OBSERVED and REPLAY_VERIFIED; no false assertion of electrical
+qualification. Initial preflight setup mismatch was corrected and
+documented, not suppressed. Historical POR-only HIL receipts remain
+unaltered and non-POR native classifications still require exact
+external controller evidence. Generic FileStorage Restart/None,
+low-space/GC/endurance and production EDLS limitations remain.

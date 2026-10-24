@@ -5,6 +5,7 @@ on:
       - "src/LittleFsVfs*.hpp"
       - "tests/LittleFsVfsMountTests.cpp"
       - "tests/run-littlefs-host-tests.sh"
+      - "tests/hil/littlefs-bounded-espidf/**"
       - "tests/fakes/esp_littlefs.h"
       - ".github/workflows/littlefs-host.yml"
   pull_request:
@@ -52,3 +53,7 @@ jobs:
         env:
           EDP_PERSISTENCE_DEPS_ROOT: ${{ github.workspace }}
         run: bash EDP-Persistence-ESP-IDF/tests/run-littlefs-host-tests.sh ${{ matrix.compiler }}
+      - name: GPIO17 power-cut classification (no device required)
+        run: python3 EDP-Persistence-ESP-IDF/tests/hil/littlefs-bounded-espidf/test_powercut_qualification.py -v
+      - name: GPIO17 end-to-end relay/UART simulation (no device required)
+        run: python3 EDP-Persistence-ESP-IDF/tests/hil/littlefs-bounded-espidf/test_relay_cut_monitor.py -v

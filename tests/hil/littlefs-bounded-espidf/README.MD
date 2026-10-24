@@ -126,3 +126,79 @@ control and log the supply OFF interval. This is a test control only.
 The provider continues to advertise conservative Restart/None
 atomicity properties. The prior POR-qualified reclaim PASS and
 write-stage WDT/SDIO reset failures remain separately classified.
+
+## 2026-10-24 approved external VDD acceptance policy
+
+The user approved **separately classified, controller-verified power
+interruption** even when ESP32 reports WDT, brownout or SDIO reset.
+See Policy/main/V2/TEST_COVERAGE.MD, section 4. Do not rewrite or
+relabel original historical POR-only run verdicts.
+
+This fixture no longer treats a reset reason as electrical-cut proof:
+the firmware preserves EDP_BND BOOT/RESET_OBSERVED diagnostics, scans
+all 64 finite candidate names through the existing FileStorage,
+verifies two adjacent complete latest retained records and emits only
+REPLAY_VERIFIED, never a powercut-success assertion.
+
+The independent RPI400 monitor demands controller-confirmed GPIO17
+OFF and ON, minimum measured OFF hold, a post-cut boot epoch (not
+buffered pre-cut UART), complete readback/replay and no loss of the
+protected window relative to the last pre-cut acknowledged record.
+It reports POR_CONFIRMED only if both native ESP_RST_POWERON and
+raw ROM POWERON_RESET are observed in that epoch, otherwise
+EXTERNALLY_VERIFIED_POWER_CUT. Unknown/missing observations remain
+FAIL, never an implicit pass. Raw ROM and app reset reasons are
+preserved even in non-POR cases. Boot replay is NOT an electrical
+measurement or a FileStorage PowerLoss property. Host checks are
+covered by 19 deterministic tests in test_powercut_qualification.py.
+
+Be aware that the test-only eight-second (or explicit configured)
+OFF interval measures controller-confirmed relay OFF and uses the
+human-verified no-backpower wiring; it does not provide an independent
+analog oscilloscope voltage trace. Physical evidence quality should be
+described precisely.
+
+## 2026-10-24 independent POR-confirmed GPIO17 hard-cut replay
+
+Approved V2/TEST_COVERAGE powercut semantics are now implemented
+strictly: firmware logs actual ROM/app reset reason and protected
+history replay only; RPI400 independently attests controller OFF/ON,
+elapsed hold and post-cut boot epoch before classifying the result.
+
+RPI400 native ESP-IDF 5.5.5 build 20261024T092051-10b1cf1f PASS0.
+First physical runner 20261024T092844-f429f9fe stopped fail-closed
+during monitor preflight (wrapper had POWER=ON while holding reset,
+but monitor initially demanded OFF), without running application/cut.
+It nevertheless first preserved a verified complete 2 MiB flash backup
+SHA256 7320c35b1928c52fe2269684de9a9160ac2dc6ee71c9bdc7e9bbe22e8293fc44
+and independently flashed/verified factory firmware image SHA256
+4a0b255aa97e986df6a1b5c0da9c812f6a2e6535e1d46009e9207019f8ba4942
+and dedicated 589824-byte seeded LittleFS partition SHA256
+2d0657e9a97bf48c20bec2ac734f7db90438953bce812cbbf1a9c7adcc110ff1.
+Preflight fixed to accept either initial controller power state;
+strict OFF/ON evidence required during the real cut. The unchanged
+verified image and backup were reused instead of reflashing.
+
+Actual GPIO17 WRITE_ENTER gen24 monitor 20261024T093434-c39effc2
+PASS0: host last ACK gen23; OFF=8.273 seconds and GPIO17 OFF status
+verified; new raw ROM POWERON_RESET and native reset 1; independently
+read/recovered complete g23/g24 and an extra fully valid g22 (retirement
+may lag completion of newest generation); app REPLAY_VERIFIED only.
+RPI400 host categorised POR_CONFIRMED, accepted=True, with raw reset
+reason preserved; GPIO17 OFF after test.
+
+Independent *physical* post-cut flash-partition readback
+20261024T093534-7f3f8754 PASS0, image SHA256
+f210474f2fe26984454ed7a54d01e4e8d932c52c896c7a73ba55bb47335fbd3c,
+offline LittleFS extracted exactly g22, g23, g24 (8192 bytes,
+generation-specific patterns entirely correct) plus EDP1 seed.
+This is an independent medium-validation receipt, not merely a
+firmware log assertion. Full backup, firmware, partition and raw UART
+remain private on RPI400; do not put them into GitHub.
+
+All 22 pure qualification and five end-to-end emulated control/UART
+tests passed, RPI400 20261024T093356-b4e3ccca. Unchanged GCC+Clang
+LittleFS provider/mount host contracts passed, run
+20261024T092926-d9b2417e. No in-place replacement durability
+claim, no automatic recovery repair, no flash-wear or GC-phase proof,
+no production EDLS historical archive claim.

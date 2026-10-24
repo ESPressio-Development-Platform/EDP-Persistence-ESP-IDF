@@ -115,7 +115,12 @@ extern "C" void app_main() {
         seed[2U]=='P'&&seed[3U]=='1',"BAD_PARTITION_SEED");
 
     if(phaseStatus==ESP_OK&&armed==1U) {
-        Require(reset==ESP_RST_POWERON,"NOT_ACTUAL_VDD_CUT");
+        // Application reset reasons are diagnostics, NOT electrical VDD
+        // qualification. Only the independent GPIO17 host can attest a cut.
+        std::printf("EDP_BND|RESET_OBSERVED|reason=%u|por=%u\n",
+            static_cast<unsigned>(reset),
+            reset==ESP_RST_POWERON ? 1U : 0U);
+        std::fflush(stdout);
         std::uint32_t penultimate=0U;
         std::uint32_t latest=0U;
         std::size_t present=0U;
@@ -136,7 +141,9 @@ extern "C" void app_main() {
         std::printf(
             "EDP_BND|RECOVERED|newest=%u|older=%u|valid=%u|contiguous=1\n",
             latest,penultimate,static_cast<unsigned>(present));
-        std::printf("EDP_BND|PASS|TWO_RETAINED_AFTER_RECLAIM_CUT\n");
+        // This asserts *only* that the protected history replayed; host
+        // must separately validate its own controller OFF/ON provenance.
+        std::printf("EDP_BND|REPLAY_VERIFIED|TWO_RETAINED_AFTER_RECLAIM_CUT\n");
         std::fflush(stdout);
         for(;;)vTaskDelay(pdMS_TO_TICKS(1000U));
     }
