@@ -138,3 +138,14 @@ as zero bytes. RPI400 test `20261023T171847-7a7fe516` PASS exit0.
 It does NOT upgrade conservative FileStorage interruption atomicity or
 establish bounded reclamation. See the optional test fixture and
 LittleFS binding design document.
+
+**Native flash-operation budget fixture (2026-10-24):** a new optional
+[LittleFS partition I/O test](tests/hil/littlefs-io-profile-espidf/README.MD)
+uses linker wrappers **only in test firmware** to count vendor LittleFS
+partition writes and erases without changing production provider behavior.
+On real ESP32-WROOM-32: 1.0816x SDK partition write amplification,
+58 erase calls over 18 new 8192-byte generations, 4 maximum observed
+erases per block and 278,568 bytes minimum free heap. The separate
+12.278-second real power-cut sample passed externally verified
+classification and protected-record recovery. This is a bounded
+measurement, not NOR endurance proof or a FileStorage atomicity upgrade.

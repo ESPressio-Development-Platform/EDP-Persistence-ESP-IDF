@@ -1,0 +1,10 @@
+.pio/
+managed_components/
+dependencies.lock
+sdkconfig*
+__pycache__/
+*.bin
+*.img
+*.elf
+*.map
+build/

@@ -204,3 +204,49 @@ documented, not suppressed. Historical POR-only HIL receipts remain
 unaltered and non-POR native classifications still require exact
 external controller evidence. Generic FileStorage Restart/None,
 low-space/GC/endurance and production EDLS limitations remain.
+
+### 2026-10-24 — test-only LittleFS partition I/O instrumentation
+
+The reproducible optional [I/O profile fixture](../tests/hil/littlefs-io-profile-espidf/README.MD)
+uses the **existing** native ESP-IDF bounded immutable two-retained-record
+workload and its **canonical** GPIO17 controller/qualification Python scripts.
+Only a test-only ESP-IDF linker wrapper observes calls the upstream
+`joltwallet/littlefs` component makes to `esp_partition_write()` and
+`esp_partition_erase_range()`. It delegates every native call unchanged.
+No new FileStorage provider, no edited vendor library, and no new EDP
+component dependency is introduced.
+
+On RPI400 native build `20261024T163552-98f08f2f` PASS exit0,
+the wrappers were present in the final Xtensa ELF. The actual integrated
+ESP32-WROOM-32 hardware run `20261024T164137-b488e678` **PASS exit0**
+included a private full 2,097,152-byte pretest flash backup,
+independent firmware/seeded-partition verification, and a genuine
+GPIO17 VDD-off interval **12.278 seconds**. Host classification:
+`EXTERNALLY_VERIFIED_POWER_CUT`, last precut ACK generation 23,
+ROM `rst:0x3 SW_RESET` (not POR), native reset 3; complete
+8192-byte immutable generations **22 and 23** recovered with a
+bounded two-generation window, no protected corruption.
+
+Across generations 3–20 (18 additional 8192-byte logical records),
+the native LittleFS partition API reported **159,488 bytes programmed**
+and **58 erase calls** for 147,456 logical record-payload bytes:
+**1.0816× partition-API write amplification**. Since boot,
+**62/144 blocks had seen at least one erase**, maximum observed
+**4 erases** on any individual block, no native API write/erase errors,
+minimum ESP32 free heap **278,568 bytes**. The independent
+`verify_io_metrics.py` parser self-test and raw serial counter audit
+both PASS. Counters reset each boot and have no guarantee of measuring
+lower-layer QSPI write/erase effects, vendor endurance or full-life
+garbage-collection pressure. This narrow workload is neither a
+production write-amplification ceiling nor an archive durability release.
+
+Private backup SHA256
+`880d983b7f38b3ea70c67a72ea05c7ac6cb660c9452d8daff2b4de17f3171c9b`.
+Firmware factory SHA256
+`8ef8d4b478cbc99c5f42b924a095e9f55b265c455205f58bc755bfee71ff3b0e`.
+Seed LittleFS image SHA256
+`2d0657e9a97bf48c20bec2ac734f7db90438953bce812cbbf1a9c7adcc110ff1`.
+All binary/flash/UART data are retained **only on RPI400** under
+`/srv/espressio/scratch/gpt6-lfs-two-category-20261024-1230/private-wear-instrumented-cut-20261024/`,
+not committed to GitHub. FileStorage remains Restart/None; older
+same-name replacement atomicity failure remains authoritative.
