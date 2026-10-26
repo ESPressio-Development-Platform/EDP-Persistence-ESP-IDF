@@ -285,3 +285,16 @@ metadata/high-water proof, no worst-case garbage-collection or flash
 endurance bound, and no upgrade to `FileInterruptionAtomicity::PowerLoss`.
 Actual hardware results must be recorded with exact immutable receipt IDs
 separately, not inferred from this code or host simulation alone.
+
+
+### Separate low-space cleanup interruption
+
+The test-only `esp32dev-lowspace-reclaim` profile and matching
+`EDP_LFS_CUT_STAGE=lowspace_reclaim` deliberately trigger independent
+GPIO17 VDD interruption after the application has STARTED deleting
+disposable near-full filler files (each candidate remove is marked
+`LOWSPACE_RECLAIM_ENTER`). The host demands post-boot g1/g2 complete
+replay and `LOWSPACE_ROLLED` after g3 ACK/verify, oldest g1 retirement.
+This does NOT establish interruption in any named LittleFS internal
+garbage-collector instruction. It also does NOT qualify production EDLS
+or strengthen the generic VfsFileStorage profile.

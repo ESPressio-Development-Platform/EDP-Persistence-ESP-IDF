@@ -314,9 +314,47 @@ static void WriteFreshGeneration(Storage& files,std::uint32_t generation) {
             static_cast<unsigned>(padsCommitted)
         );
         std::fflush(stdout);
+#if defined(EDP_TEST_LOWSPACE_RECLAIM)
+        // Separate test-only scenario: the host intentionally interrupts
+        // the finite low-space cleanup itself. Preserve g1/g2 until a
+        // separately verified successor becomes committed. This does not
+        // attest which internal LittleFS erase/GC instruction was cut.
+        for (std::uint32_t index = 0U;
+             index < MaximumPaddingFiles;
+             ++index) {
+            char filename[16U]{};
+            const auto nameLength = std::snprintf(
+                filename,
+                sizeof(filename),
+                "pad%03u.bin",
+                static_cast<unsigned>(index)
+            );
+            Require(nameLength > 0 &&
+                nameLength < static_cast<int>(sizeof(filename)),
+                "LOWSPACE_RECLAIM_CUT_NAME");
+            const auto path = P::FilePathView::Validate(
+                filename,
+                static_cast<std::size_t>(nameLength)
+            );
+            Require(path.Status == P::FilePathValidationStatus::Succeeded,
+                "LOWSPACE_RECLAIM_CUT_PATH");
+            std::printf(
+                "EDP_BND|LOWSPACE_RECLAIM_ENTER|pad=%u\n",
+                static_cast<unsigned>(index)
+            );
+            std::fflush(stdout);
+            const auto result = files.RemoveFile(path.Value);
+            Require(result == P::FileRemoveStatus::Succeeded ||
+                result == P::FileRemoveStatus::NotFound,
+                "LOWSPACE_RECLAIM_CUT_FAILURE");
+            vTaskDelay(pdMS_TO_TICKS(10U));
+        }
+        Halt("LOWSPACE_RECLAIM_FINISHED_WITHOUT_POWER_CUT");
+#else
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(1000U));
         }
+#endif
     }
 #endif
 

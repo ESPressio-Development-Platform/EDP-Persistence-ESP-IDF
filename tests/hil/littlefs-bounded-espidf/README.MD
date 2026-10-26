@@ -257,3 +257,30 @@ requires ONLY seed.txt plus the checked complete g0002.bin and g0003.bin,
 and no retired g0001.bin or disposable pad files. The checker tests finite
 synthetic payload patterns; it does NOT claim canonical EDLS/EDLG or wear
 qualification. Private extracted images and UART remain on RPI400.
+
+
+### Distinct low-space reclamation-phase electrical-cut variant (2026-10-26)
+
+A second opt-in native build `esp32dev-lowspace-reclaim` uses the same two
+protected 8192-byte records, intentionally fills the same isolated test
+partition until real physical FileStorage allocation failure, and rejects
+the unacknowledged successor. It then begins deleting **only unprotected**
+padding files, instrumented with `LOWSPACE_RECLAIM_ENTER|pad=N` before each
+remove and a finite 10ms pacing interval. The RPI400 host independently
+issues a GPIO17 true VDD cut at the first eligible N>=5. The host does NOT
+assert that the cut occurred within the exact LittleFS GC/flash operation;
+the observation is an interruption of the active reclamation campaign.
+It preserves a complete full-chip backup and separately verifies the
+native firmware/seeded partition, using exactly the established runner.
+
+A new power-on must replay the original acknowledged g1/g2 regardless
+of which padding files were already deleted or partially reclaimed.
+The test-only recovery is repeatable: cleanup tolerates absent disposable
+pads, then removes the unacknowledged g3 candidate if present; it
+commits/readbacks new g3 before deleting retired g1, and validates the
+finite g2/g3 window. The host requires independently verified OFF/ON,
+a separate ROM/app boot epoch, protected replay AND `LOWSPACE_ROLLED`.
+The external readback/offline partition auditor remains mandatory for
+a strong claimed physical result. All 0.1.0 production provider contract
+traits, source headers and general littlefs durability claims remain
+UNCHANGED. No indefinite retention, no user-facing data autoformat.

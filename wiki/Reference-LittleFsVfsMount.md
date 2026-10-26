@@ -61,3 +61,11 @@ controller OFF/ON plus raw reset/boot epoch. The separate test-only offline
 auditor independently checks a full read-back/extracted filesystem image.
 No production contract, Composition property, provider source header,
 component dependency or library version is changed by this test.
+
+
+A separate `esp32dev-lowspace-reclaim` test-only fixture targets external
+power disconnection **during a finite low-space cleanup campaign**,
+with explicit `LOWSPACE_RECLAIM_ENTER` markers. Recovering g1/g2 and
+successfully rolling to g2/g3 does not mean the relay landed inside a
+specific LittleFS erase/GC instruction. Physical controller, boot and
+readback results must be recorded, not presumed.

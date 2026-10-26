@@ -171,3 +171,14 @@ a full flash endurance model, or universal interruption-phase coverage.
 An independent host auditor checks an externally read-back and extracted
 physical LittleFS partition for the expected two retained synthetic files
 after the test; raw media and UART remain private on RPI400.
+
+
+### Additional low-space reclamation-cut qualification
+
+An independent test-only `esp32dev-lowspace-reclaim` variant triggers the
+GPIO17 controller while deleting unprotected padding after near-full
+failure. It explicitly checks that older still-ACKed records survive and
+the next boot can resume cleanup, verify a new immutable successor and
+retire the oldest eligible history. This is reclamation-*campaign*
+interruption, not proof of a particular firmware or flash GC instruction.
+See the existing [LittleFS HIL README](tests/hil/littlefs-bounded-espidf/README.MD).

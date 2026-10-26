@@ -7,7 +7,7 @@ PROJECT="$ROOT/tests/hil/littlefs-bounded-espidf"
 BUILD_ENV="${EDP_LFS_BUILD_ENV:-esp32dev}"
 STAGE="${EDP_LFS_CUT_STAGE:-reclaim}"
 case "$STAGE:$BUILD_ENV" in
-    lowspace:esp32dev-lowspace|write:esp32dev|reclaim:esp32dev) ;;
+    lowspace:esp32dev-lowspace|lowspace_reclaim:esp32dev-lowspace-reclaim|write:esp32dev|reclaim:esp32dev) ;;
     *) echo "Invalid stage/build pairing: $STAGE:$BUILD_ENV" >&2; exit 2 ;;
 esac
 IMAGE="$PROJECT/.pio/build/$BUILD_ENV/firmware.factory.bin"
