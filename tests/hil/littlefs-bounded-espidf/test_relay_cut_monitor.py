@@ -43,7 +43,8 @@ class EmulatedSerial:
 
 class ElectricalControllerAndBufferTests(unittest.TestCase):
     def exercise(self, *, native=7, rom="rst:0x10 (RTCWDT_RTC_RESET)",
-                 wrong_off=False, bad_recovery=False):
+                 wrong_off=False, bad_recovery=False,
+                 lowspace=False):
         # Last line of the original UART chunk is STALE pre-cut replay.
         # The event loop MUST discard it when a new power epoch begins.
         before = (
@@ -64,6 +65,26 @@ class ElectricalControllerAndBufferTests(unittest.TestCase):
             )
             + "EDP_BND|REPLAY_VERIFIED|TWO_RETAINED_AFTER_RECLAIM_CUT\n"
         ).encode()
+        if lowspace:
+            before = (
+                b"rst:0x1 (POWERON_RESET)\n"
+                b"EDP_BND|BOOT|reset=1\n"
+                b"EDP_BND|ACK|gen=2\n"
+                b"EDP_BND|LOWSPACE_SAFE|protected=1,2|last_ack=2|pads=59|no_ack_3=1\n"
+            )
+            after = (
+                f"{rom}\n"
+                f"EDP_BND|BOOT|reset={native}\n"
+                f"EDP_BND|RESET_OBSERVED|reason={native}|por={int(native==1)}\n"
+                + (
+                    "EDP_BND|RECOVERED|newest=2|older=0|valid=1|contiguous=1\n"
+                    if bad_recovery else
+                    "EDP_BND|RECOVERED|newest=2|older=1|valid=2|contiguous=1\n"
+                )
+                + ("" if bad_recovery else
+                   "EDP_BND|LOWSPACE_ROLLED|ack=3|window=2,3|retired=1\n")
+                + "EDP_BND|REPLAY_VERIFIED|TWO_RETAINED_AFTER_RECLAIM_CUT\n"
+            ).encode()
         port = EmulatedSerial(before, after)
         elapsed = [0.0]
         actual_clock = time.monotonic
@@ -92,7 +113,7 @@ class ElectricalControllerAndBufferTests(unittest.TestCase):
             patch.object(monitor.time, "monotonic",
                          side_effect=lambda: actual_clock()+elapsed[0]),
             patch.dict(os.environ, {
-                "EDP_LFS_CUT_STAGE": "write",
+                "EDP_LFS_CUT_STAGE": "lowspace" if lowspace else "write",
                 "EDP_LFS_OFF_HOLD_S": "8.0",
             }),
             patch("builtins.print", side_effect=lambda *a, **_k: results.append(
@@ -135,6 +156,28 @@ class ElectricalControllerAndBufferTests(unittest.TestCase):
         self.assertEqual(code, 4)
         # Precut replay marker in the buffered chunk was discarded.
         self.assertEqual(recorded.count("REPLAY_VERIFIED"), 1)
+
+    def test_lowspace_failed_successor_preserves_acknowledged_pair(self):
+        code, output, _, _ = self.exercise(lowspace=True)
+        self.assertEqual(code, 0)
+        self.assertTrue(any("QUALIFICATION=EXTERNALLY_VERIFIED_POWER_CUT"
+                            in x for x in output))
+        self.assertTrue(any("last_ack=2|newest=2|older=1"
+                            in x for x in output))
+
+    def test_lowspace_corrupt_protected_pair_is_rejected(self):
+        code, output, _, _ = self.exercise(
+            lowspace=True, bad_recovery=True
+        )
+        self.assertEqual(code, 4)
+        self.assertTrue(any("PROTECTED_RETAINED_WINDOW_FAILED"
+                            in x for x in output))
+
+    def test_lowspace_controller_failure_is_rejected(self):
+        code, _, _, _ = self.exercise(
+            lowspace=True, wrong_off=True
+        )
+        self.assertEqual(code, 9)
 
     def test_controller_did_not_confirm_relay_off(self):
         code, _, _, _ = self.exercise(wrong_off=True)

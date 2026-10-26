@@ -57,3 +57,5 @@ jobs:
         run: python3 EDP-Persistence-ESP-IDF/tests/hil/littlefs-bounded-espidf/test_powercut_qualification.py -v
       - name: GPIO17 end-to-end relay/UART simulation (no device required)
         run: python3 EDP-Persistence-ESP-IDF/tests/hil/littlefs-bounded-espidf/test_relay_cut_monitor.py -v
+      - name: Low-space recovered-media offline audit (no device required)
+        run: python3 EDP-Persistence-ESP-IDF/tests/hil/littlefs-bounded-espidf/test_audit_lowspace_partition.py -v

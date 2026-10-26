@@ -149,3 +149,25 @@ erases per block and 278,568 bytes minimum free heap. The separate
 12.278-second real power-cut sample passed externally verified
 classification and protected-record recovery. This is a bounded
 measurement, not NOR endurance proof or a FileStorage atomicity upgrade.
+
+## Finite rolling history / LittleFS high-water qualification (2026-10-26)
+
+The Logging application, not VfsFileStorage, owns the finite physical
+archive capacity/retention semantics selected at compile time or Bootstrap.
+**Indefinite retention is NOT intended**: after a verified immutable
+successor commit, the oldest **eligible** history may be reclaimed. While
+the physical medium lacks enough scratch/metadata capacity to create and
+verify the successor, the application must refuse the new archive commit
+rather than truncate or delete the two still-retained acknowledged records.
+The provider has never acquired generic PowerLoss operation atomicity.
+
+The existing [bounded HIL fixture](tests/hil/littlefs-bounded-espidf/README.MD)
+now includes an **opt-in test-only** `esp32dev-lowspace` build profile,
+finite high-water fill, collision refusal, unacknowledged successor
+failure handling, physical power-loss recovery, and a postrecovery
+verified commit-before-oldest-retirement roll. It does **not** implement
+a production Logging EDLS archive, a replacement FileStorage provider,
+a full flash endurance model, or universal interruption-phase coverage.
+An independent host auditor checks an externally read-back and extracted
+physical LittleFS partition for the expected two retained synthetic files
+after the test; raw media and UART remain private on RPI400.

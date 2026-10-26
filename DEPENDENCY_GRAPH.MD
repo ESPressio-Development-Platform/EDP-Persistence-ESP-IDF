@@ -37,3 +37,15 @@ EDP mandatory dependency or reverse path is introduced. Native
 LittleFS's mount/cache/wear logic stays in the vendor component,
 not duplicated inside EDP-Persistence-ESP-IDF or EDP-Logging.
 SPIFFS and NVS existing composition guarantees remain unchanged.
+
+## 2026-10-26 low-space fixture dependency revalidation
+
+The optional native LittleFS high-water test is inside the **existing**
+`tests/hil/littlefs-bounded-espidf` directory and consumes the already
+declared native ESP-IDF + `joltwallet/littlefs` fixture dependencies.
+The offline extraction checker is Python-standard-library-only and
+requires the existing external test-only `littlefs-python` command solely
+when auditing a privately extracted device partition. No production
+`EDP-Persistence-ESP-IDF` mandatory or optional library edge,
+Composition capability, Memory operation or provider is added. The complete
+existing dependency tree above remains unchanged; all versions are 0.1.0.

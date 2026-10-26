@@ -250,3 +250,38 @@ All binary/flash/UART data are retained **only on RPI400** under
 `/srv/espressio/scratch/gpt6-lfs-two-category-20261024-1230/private-wear-instrumented-cut-20261024/`,
 not committed to GitHub. FileStorage remains Restart/None; older
 same-name replacement atomicity failure remains authoritative.
+
+## 2026-10-26 finite history / low-space experimental protocol
+
+**Scope: physical qualification fixture ONLY.** The application Logging
+Bootstrap chooses finite maximum history capacity; the filesystem's entire
+physical capacity must not be mistaken for a usable immutable-log budget.
+The reserve for a successor plus its metadata and reclaim activity is not
+yet bounded in production. The oldest eligible record may roll out only
+**after** the successor has been completely committed/read back, and an
+unacknowledged failed candidate must not retire any protected record.
+Neither a logical ring's normal capacity rollover nor a physical near-full
+allocation failure warrants indefinite retention or dropping still-protected
+bytes. The latter demands fail-closed admission and an explicit result.
+
+The existing `tests/hil/littlefs-bounded-espidf` fixture has a separate
+`esp32dev-lowspace` C++20 native build that saturates the *dedicated test*
+0x90000 LittleFS partition with bounded **unprotected** padding; it
+qualifies existing-generation collision refusal, failure of an attempted
+new immutable generation, exact replay of the two ACKed 8KiB generations,
+physical VDD-cut classification, then bounded cleanup and verified
+successor-before-oldest reclamation. The standard `esp32dev` fixture
+is unchanged. The opt-in host control requires the matching
+`EDP_LFS_CUT_STAGE=lowspace` and `EDP_LFS_BUILD_ENV=esp32dev-lowspace`
+together. The independent `audit_lowspace_partition.py` consumes ONLY a
+privately extracted medium image to require exact g0002.bin/g0003.bin
+contents and absence of retired g0001.bin and test filler. Host negative
+tests cover corruption, truncation, unexpected leftovers, wrong seed,
+false power-cut evidence and missing postboot rolling confirmation.
+
+These **synthetic** test files are not production EDLG/EDLS frames; there
+is still no qualified high-capacity Logging archive, no finite production
+metadata/high-water proof, no worst-case garbage-collection or flash
+endurance bound, and no upgrade to `FileInterruptionAtomicity::PowerLoss`.
+Actual hardware results must be recorded with exact immutable receipt IDs
+separately, not inferred from this code or host simulation alone.

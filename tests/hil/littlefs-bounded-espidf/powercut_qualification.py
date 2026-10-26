@@ -45,6 +45,7 @@ class PostCutEvidence:
         self.reset_observed: tuple[int, int] | None = None
         self.recovered: tuple[int, int, int] | None = None
         self.replay_verified = False
+        self.roll_verified = False
         self.halt_reason: str | None = None
 
     def observe(self, line: str) -> None:
@@ -66,6 +67,8 @@ class PostCutEvidence:
         recovered = RECOVER.search(line)
         if recovered:
             self.recovered = tuple(int(recovered.group(i)) for i in (1, 2, 3))
+        if "EDP_BND|LOWSPACE_ROLLED|ack=3|window=2,3|retired=1" in line:
+            self.roll_verified = True
         if REPLAY_PASS in line:
             self.replay_verified = True
 
@@ -77,6 +80,7 @@ class PostCutEvidence:
         on_confirmed: bool,
         measured_off_seconds: float,
         minimum_off_seconds: float,
+        require_rolling: bool = False,
     ) -> CutVerdict:
         newest, older, count = self.recovered or (None, None, None)
         failure = ""
@@ -102,6 +106,8 @@ class PostCutEvidence:
             failure = "RETAINED_WINDOW_NOT_OBSERVED"
         elif newest < ack_before_cut or older + 1 != newest or not (2 <= count <= 4):
             failure = "PROTECTED_RETAINED_WINDOW_FAILED"
+        elif require_rolling and not self.roll_verified:
+            failure = "ROLLING_SUCCESSOR_NOT_CONFIRMED"
 
         # POR is a narrower verified subtype; no other reset can impersonate it.
         has_rom_por = any(code == 1 and "POWERON" in label.upper()

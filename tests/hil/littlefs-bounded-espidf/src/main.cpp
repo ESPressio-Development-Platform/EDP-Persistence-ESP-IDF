@@ -11,6 +11,10 @@
 #include <freertos/task.h>
 #include <esp_system.h>
 #include <esp_heap_caps.h>
+
+#if defined(EDP_TEST_LOWSPACE)
+#include <esp_littlefs.h>
+#endif
 #include <nvs.h>
 #include <nvs_flash.h>
 
@@ -87,6 +91,235 @@ static void WriteFreshGeneration(Storage& files,std::uint32_t generation) {
     Require(result==P::FileReplaceStatus::Succeeded,"IMMUTABLE_WRITE_FAILED");
     Require(VerifyGeneration(files,generation),"IMMUTABLE_READBACK_FAILED");
 }
+
+#if defined(EDP_TEST_LOWSPACE)
+    // This test-only workload uses explicit finite bounds. Filler files are
+    // never log records, never acknowledged and never part of the retention
+    // window. It does not alter any production FileStorage capability.
+    static constexpr std::uint32_t MaximumPaddingFiles = 96U;
+    static constexpr std::size_t PartitionBytes = 0x90000U;
+
+    /// Distinguishes a collision from an uncommitted successor write failure.
+    enum class CandidateStatus : std::uint8_t {
+        Committed = 0U,
+        ExistingName = 1U,
+        StorageFailure = 2U,
+        InvalidReadback = 3U
+    };
+
+    /// Tests immutable-file admission without ever opening an existing name.
+    [[nodiscard]] static CandidateStatus TryCreateCandidate(
+        Storage& files,
+        std::uint32_t generation
+    ) {
+        char filename[16U]{};
+        const auto path = GenerationPath(generation, filename);
+        const auto previous = files.ReadFileAt(
+            path,
+            P::StorageOffset{},
+            P::DestinationBufferView{Destination.data(), 1U}
+        );
+        if (previous.Status != P::FileReadStatus::NotFound) {
+            return CandidateStatus::ExistingName;
+        }
+
+        Source.fill(static_cast<std::uint8_t>(generation));
+        if (files.ReplaceFile(
+            path,
+            P::SourceBufferView{Source.data(), Source.size()}
+        ) != P::FileReplaceStatus::Succeeded) {
+            return CandidateStatus::StorageFailure;
+        }
+
+        return VerifyGeneration(files, generation)
+            ? CandidateStatus::Committed
+            : CandidateStatus::InvalidReadback;
+    }
+
+    /// Reports the actual test partition usage without advertising it as an
+    /// EDP-Persistence capacity-capability or a future write reservation.
+    static void PrintPhysicalUsage(const char* label) {
+        std::size_t total = 0U;
+        std::size_t used = 0U;
+        Require(
+            esp_littlefs_info("edplfs", &total, &used) == ESP_OK,
+            "LOWSPACE_INFO_UNAVAILABLE"
+        );
+        Require(total == PartitionBytes && used <= total,
+            "LOWSPACE_INFO_INCONSISTENT");
+        std::printf(
+            "EDP_BND|LOWSPACE_USAGE|stage=%s|total=%u|used=%u|free=%u\n",
+            label,
+            static_cast<unsigned>(total),
+            static_cast<unsigned>(used),
+            static_cast<unsigned>(total - used)
+        );
+        std::fflush(stdout);
+    }
+
+    /// Exposes the physical exhaustion boundary while retaining g1 and g2.
+    /// No new record is acknowledged until both a complete write AND an
+    /// independent exact replay have succeeded. No retained name is reused.
+
+    /// On a later boot, first verify g1/g2 (done at the caller), then reclaim
+    /// only unprotected test filler and the unacknowledged torn candidate.
+    /// Exactly one new immutable successor is acknowledged before g1 retires.
+    static void RecoverFreeSpaceAndRoll(Storage& files) {
+        for (std::uint32_t index = 0U;
+             index < MaximumPaddingFiles;
+             ++index) {
+            char filename[16U]{};
+            const auto length = std::snprintf(
+                filename,
+                sizeof(filename),
+                "pad%03u.bin",
+                static_cast<unsigned>(index)
+            );
+            Require(length > 0 &&
+                length < static_cast<int>(sizeof(filename)),
+                "LOWSPACE_RECLAIM_NAME");
+            const auto path = P::FilePathView::Validate(
+                filename,
+                static_cast<std::size_t>(length)
+            );
+            Require(path.Status == P::FilePathValidationStatus::Succeeded,
+                "LOWSPACE_RECLAIM_PATH");
+            const auto result = files.RemoveFile(path.Value);
+            Require(result == P::FileRemoveStatus::Succeeded ||
+                result == P::FileRemoveStatus::NotFound,
+                "LOWSPACE_RECLAIM_FILLER_FAILED");
+            if (index % 16U == 15U) {
+                vTaskDelay(pdMS_TO_TICKS(1U));
+            }
+        }
+
+        PrintPhysicalUsage("after_filler_reclaim");
+        Require(VerifyGeneration(files, 1U) && VerifyGeneration(files, 2U),
+            "LOWSPACE_RECLAIM_CHANGED_PROTECTED");
+
+        char uncommittedName[16U]{};
+        const auto uncommittedPath = GenerationPath(3U, uncommittedName);
+        // No ACK(3) was ever emitted. A failed Create may have left a
+        // complete, truncated or absent disposable candidate. Never
+        // truncate any still-retained filename; only g3 is unprotected.
+        const auto candidateRemove = files.RemoveFile(uncommittedPath);
+        Require(candidateRemove == P::FileRemoveStatus::Succeeded ||
+            candidateRemove == P::FileRemoveStatus::NotFound,
+            "LOWSPACE_FAILED_CANDIDATE_CANNOT_BE_RETIRED");
+        Require(VerifyGeneration(files, 1U) && VerifyGeneration(files, 2U),
+            "LOWSPACE_CANDIDATE_CLEANUP_DAMAGED_PROTECTED");
+
+        const auto successor = TryCreateCandidate(files, 3U);
+        Require(successor == CandidateStatus::Committed,
+            "LOWSPACE_SUCCESSOR_FAILED_AFTER_RECLAIM");
+        std::printf("EDP_BND|ACK|gen=3\n");
+        std::fflush(stdout);
+
+        char retiredName[16U]{};
+        const auto retiredPath = GenerationPath(1U, retiredName);
+        Require(files.RemoveFile(retiredPath) ==
+            P::FileRemoveStatus::Succeeded,
+            "LOWSPACE_RETIRED_OLDEST_REMOVE_FAILED");
+
+        const auto gone = files.ReadFileAt(
+            retiredPath,
+            P::StorageOffset{},
+            P::DestinationBufferView{Destination.data(), 1U}
+        );
+        Require(gone.Status == P::FileReadStatus::NotFound,
+            "LOWSPACE_RETIRED_OLDEST_STILL_PRESENT");
+        Require(VerifyGeneration(files, 2U) && VerifyGeneration(files, 3U),
+            "LOWSPACE_ROLLED_WINDOW_INVALID");
+        PrintPhysicalUsage("rolled");
+        std::printf(
+            "EDP_BND|LOWSPACE_ROLLED|ack=3|window=2,3|retired=1\n"
+        );
+        std::fflush(stdout);
+    }
+
+    static void RunLowSpaceExhaustion(Storage& files) {
+        Require(
+            TryCreateCandidate(files, 2U) == CandidateStatus::ExistingName,
+            "LOWSPACE_COLLISION_NOT_REJECTED"
+        );
+        Require(VerifyGeneration(files, 1U) && VerifyGeneration(files, 2U),
+            "LOWSPACE_COLLISION_CHANGED_PROTECTED");
+        std::printf("EDP_BND|LOWSPACE_COLLISION_REFUSED|gen=2\n");
+        PrintPhysicalUsage("initial");
+
+        bool sawPhysicalFailure = false;
+        std::uint32_t padsCommitted = 0U;
+        for (std::uint32_t index = 0U;
+             index < MaximumPaddingFiles;
+             ++index) {
+            char filename[16U]{};
+            const auto length = std::snprintf(
+                filename,
+                sizeof(filename),
+                "pad%03u.bin",
+                static_cast<unsigned>(index)
+            );
+            Require(length > 0 &&
+                length < static_cast<int>(sizeof(filename)),
+                "LOWSPACE_PAD_NAME");
+            const auto path = P::FilePathView::Validate(
+                filename,
+                static_cast<std::size_t>(length)
+            );
+            Require(path.Status == P::FilePathValidationStatus::Succeeded,
+                "LOWSPACE_PAD_PATH");
+
+            // Unique disposable physical pressure only. Never a protected
+            // or acknowledged EDLS/EDLG record.
+            Source.fill(0xA5U);
+            const auto result = files.ReplaceFile(
+                path.Value,
+                P::SourceBufferView{Source.data(), Source.size()}
+            );
+            if (result != P::FileReplaceStatus::Succeeded) {
+                sawPhysicalFailure = true;
+                std::printf(
+                    "EDP_BND|LOWSPACE_FILL_REFUSED|pad=%u|status=%u\n",
+                    static_cast<unsigned>(index),
+                    static_cast<unsigned>(result)
+                );
+                std::fflush(stdout);
+                break;
+            }
+
+            ++padsCommitted;
+            if (padsCommitted % 8U == 0U) {
+                PrintPhysicalUsage("filling");
+            }
+        }
+
+        Require(sawPhysicalFailure, "LOWSPACE_NO_EXHAUSTION_WITHIN_BOUND");
+        PrintPhysicalUsage("exhausted");
+        Require(VerifyGeneration(files, 1U) && VerifyGeneration(files, 2U),
+            "LOWSPACE_FILL_CHANGED_PROTECTED");
+
+        std::printf("EDP_BND|LOWSPACE_CANDIDATE_ENTER|gen=3\n");
+        std::fflush(stdout);
+        const auto candidate = TryCreateCandidate(files, 3U);
+        // A full/complete candidate could legitimately be committed if the
+        // filesystem still admits it; that is not an exhaustion-failure test.
+        // Do not falsely report a fail-closed proof in such a case.
+        Require(candidate == CandidateStatus::StorageFailure,
+            "LOWSPACE_CANDIDATE_NOT_FAILED_AS_EXPECTED");
+        Require(VerifyGeneration(files, 1U) && VerifyGeneration(files, 2U),
+            "LOWSPACE_FAILED_WRITE_CHANGED_PROTECTED");
+        PrintPhysicalUsage("failed_candidate");
+        std::printf(
+            "EDP_BND|LOWSPACE_SAFE|protected=1,2|last_ack=2|pads=%u|no_ack_3=1\n",
+            static_cast<unsigned>(padsCommitted)
+        );
+        std::fflush(stdout);
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(1000U));
+        }
+    }
+#endif
+
 extern "C" void app_main() {
     const auto reset=esp_reset_reason();
     std::printf("EDP_BND|BOOT|reset=%u\n",static_cast<unsigned>(reset));
@@ -121,6 +354,23 @@ extern "C" void app_main() {
             static_cast<unsigned>(reset),
             reset==ESP_RST_POWERON ? 1U : 0U);
         std::fflush(stdout);
+#if defined(EDP_TEST_LOWSPACE)
+        // An unacknowledged failed new file can be partial OR complete;
+        // neither changes the independently acknowledged g1/g2 window.
+        Require(VerifyGeneration(storage, 1U) &&
+            VerifyGeneration(storage, 2U),
+            "LOWSPACE_PROTECTED_WINDOW_LOST");
+        const bool candidateValid = VerifyGeneration(storage, 3U);
+        std::printf(
+            "EDP_BND|LOWSPACE_REPLAY|acknowledged=2|candidate_valid=%u\n",
+            candidateValid ? 1U : 0U
+        );
+        std::printf(
+            "EDP_BND|RECOVERED|newest=2|older=1|valid=2|contiguous=1\n"
+        );
+        std::fflush(stdout);
+        RecoverFreeSpaceAndRoll(storage);
+#else
         std::uint32_t penultimate=0U;
         std::uint32_t latest=0U;
         std::size_t present=0U;
@@ -141,6 +391,7 @@ extern "C" void app_main() {
         std::printf(
             "EDP_BND|RECOVERED|newest=%u|older=%u|valid=%u|contiguous=1\n",
             latest,penultimate,static_cast<unsigned>(present));
+#endif
         // This asserts *only* that the protected history replayed; host
         // must separately validate its own controller OFF/ON provenance.
         std::printf("EDP_BND|REPLAY_VERIFIED|TWO_RETAINED_AFTER_RECLAIM_CUT\n");
@@ -163,6 +414,9 @@ extern "C" void app_main() {
         static_cast<unsigned>(esp_get_free_heap_size()),
         static_cast<unsigned>(esp_get_minimum_free_heap_size()));
     std::fflush(stdout);
+#if defined(EDP_TEST_LOWSPACE)
+    RunLowSpaceExhaustion(storage);
+#else
     for(std::uint32_t g=3U;g<=64U;++g) {
         std::printf("EDP_BND|WRITE_ENTER|gen=%u\n",g);
         std::fflush(stdout);
@@ -186,4 +440,5 @@ extern "C" void app_main() {
         vTaskDelay(pdMS_TO_TICKS(60U));
     }
     Halt("NO_POWER_CUT_IN_RECLAMATION_CAMPAIGN");
+#endif
 }

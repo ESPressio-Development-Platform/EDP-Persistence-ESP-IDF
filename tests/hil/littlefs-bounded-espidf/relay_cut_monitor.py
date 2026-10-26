@@ -39,13 +39,17 @@ def run(destination: str) -> int:
     evidence_path.mkdir(parents=True, exist_ok=False)
 
     stage = os.environ.get("EDP_LFS_CUT_STAGE", "reclaim").lower()
-    if stage not in {"reclaim", "write"}:
-        raise ValueError("cut stage must be reclaim or write")
-    threshold = 22 if stage == "reclaim" else 24
+    if stage not in {"reclaim", "write", "lowspace"}:
+        raise ValueError("cut stage must be reclaim, write or lowspace")
+    threshold = 22 if stage == "reclaim" else (24 if stage == "write" else 1)
     trigger = (
         re.compile(r"\|RECLAIM_ENTER\|retired=(\d+)")
         if stage == "reclaim"
-        else re.compile(r"\|WRITE_ENTER\|gen=(\d+)")
+        else (
+            re.compile(r"\|WRITE_ENTER\|gen=(\d+)")
+            if stage == "write"
+            else re.compile(r"\|LOWSPACE_SAFE\|protected=1,2\|last_ack=(\d+)")
+        )
     )
     off_hold_s = float(os.environ.get("EDP_LFS_OFF_HOLD_S", "8.0"))
     if not (5.0 <= off_hold_s <= 60.0):
@@ -116,6 +120,7 @@ def run(destination: str) -> int:
                                 on_confirmed=on_confirmed,
                                 measured_off_seconds=measured_off_s,
                                 minimum_off_seconds=off_hold_s,
+                                require_rolling=stage == "lowspace",
                             )
                             print(
                                 f"HOST|QUALIFICATION={verdict.classification}"

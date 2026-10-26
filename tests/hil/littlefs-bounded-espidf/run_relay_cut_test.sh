@@ -4,7 +4,13 @@ OWNER="${EDP_LITTLEFS_AGENT_ID:?Exclusive RPI400 lock-owner ID required}"
 EVIDENCE="${EDP_LITTLEFS_EVIDENCE_DIR:?Unique private absolute evidence path required}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 PROJECT="$ROOT/tests/hil/littlefs-bounded-espidf"
-IMAGE="$PROJECT/.pio/build/esp32dev/firmware.factory.bin"
+BUILD_ENV="${EDP_LFS_BUILD_ENV:-esp32dev}"
+STAGE="${EDP_LFS_CUT_STAGE:-reclaim}"
+case "$STAGE:$BUILD_ENV" in
+    lowspace:esp32dev-lowspace|write:esp32dev|reclaim:esp32dev) ;;
+    *) echo "Invalid stage/build pairing: $STAGE:$BUILD_ENV" >&2; exit 2 ;;
+esac
+IMAGE="$PROJECT/.pio/build/$BUILD_ENV/firmware.factory.bin"
 FS_IMAGE="$PROJECT/.pio/littlefs-seeded.img"
 CONTROL=/srv/espressio/bin/esp32-integrated
 trap '"$CONTROL" power-off >/dev/null 2>&1 || true' EXIT

@@ -38,3 +38,26 @@ on one block observed since boot; minimum free heap 278,568B.
 These are bounded workload counts, NOT device-endurance certification
 or generic file atomicity. The production FileStorage profile
 remains Restart retention and None interruption atomicity.
+
+## Finite archive retention and high-water qualification fixture
+
+The application selects a **finite** log-history capacity at compile time
+or Bootstrap. It must roll out the oldest **eligible** data only after a
+complete independently verified immutable successor commit; indefinite
+retention is not an architectural objective. The current LittleFS provider
+remains Restart/None/MayModify, so a mount, close or overwrite cannot by
+itself promise preservation of every still-retained ACKed record.
+
+For a bounded native synthetic-firmware diagnostic rather than a public
+provider extension, `tests/hil/littlefs-bounded-espidf` now supplies
+`esp32dev-lowspace`. It models two protected 8KiB generations, up to 96
+unprotected 8KiB physical pad files, a failed unacknowledged candidate,
+independent retained readback and a verified external electrical cut.
+After reboot, the test-only application reclaims disposable filler, removes
+only an unacknowledged candidate, appends/reads back the new generation,
+then retires the oldest and independently validates exactly the rolling
+retained pair. The host requires the `LOWSPACE_ROLLED` marker and validates
+controller OFF/ON plus raw reset/boot epoch. The separate test-only offline
+auditor independently checks a full read-back/extracted filesystem image.
+No production contract, Composition property, provider source header,
+component dependency or library version is changed by this test.

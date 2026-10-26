@@ -202,3 +202,58 @@ LittleFS provider/mount host contracts passed, run
 20261024T092926-d9b2417e. No in-place replacement durability
 claim, no automatic recovery repair, no flash-wear or GC-phase proof,
 no production EDLS historical archive claim.
+
+## 2026-10-26: Opt-in high-water/exhaustion power-cut fixture
+
+The separate `esp32dev-lowspace` profile is **test-only**. It retains
+exactly two acknowledged 8192-byte immutable generations (g0001.bin and
+g0002.bin), tests duplicate-name preflight refusal without mutating the
+existing path, and consumes the dedicated 0x90000 LittleFS partition via
+finite **unprotected synthetic padding** (maximum 96 distinct 8192-byte
+files). It then observes a real provider write failure for *unacknowledged*
+g0003.bin. It NEVER announces ACK(3) on failure, NEVER deletes g1/g2, and
+verifies both protected generations before declaring LOWSPACE_SAFE. If
+physical exhaustion or the expected failure does not actually occur, the
+fixture halts rather than fabricating a success. A torn g3 is permitted
+because it never became acknowledged. On reboot the firmware independently
+replays and checks the protected g1/g2 window, even if an entirely valid
+unacknowledged candidate happens to be present. The host continues to own
+the electrical-cut verdict, and requires actual controller OFF/ON and a new
+boot epoch. The logical capacity is finite; no indefinite retention promise
+is made. Filler files are NOT log records, not a retained archive, and
+not a production allocator; the test is not yet qualified GC phase coverage.
+
+Run this *only* on the user-authorised, locked RPI400, after the native
+lowspace image is built and individually confirmed, with explicit
+`EDP_LFS_CUT_STAGE=lowspace EDP_LFS_BUILD_ENV=esp32dev-lowspace`. The
+existing full-chip/private backup and preflash image verification wrapper
+is reused unchanged. Both options are required together to prevent
+accidental mismatch with the previously qualified normal write/reclaim
+firmware. The fixture must leave relay POWER=OFF and never autoformat on
+mount. Retain the full physical flash image privately for offline
+protected-window validation. Do not upgrade generic PowerLoss traits.
+
+The existing `esp32dev` environment and normal write/reclaim tests are
+unchanged. Host negative GPIO17/test-control coverage includes insufficient
+retained replay, and failed controller OFF evidence for the lowspace stage.
+
+**Recovery and finite rotation:** After controller-triggered failure and a
+verified new boot, the fixture first revalidates g1 and g2 while the
+filesystem remains near-full. It then deletes ONLY disposable filler and
+the unacknowledged g3 candidate (if present), verifies g1/g2 again, creates
+and independently re-reads a brand-new g3, emits ACK3, and only then
+retires g1. It verifies the resulting exact bounded g2/g3 window and
+emits `LOWSPACE_ROLLED`. The host's lowspace power-cut verdict requires
+this marker, not just an unchanged old two-file replay. It does not make
+logs indefinite, prove uninterrupted arbitrary GC, or provide a production
+EDLS allocator/retention policy.
+
+**Independent raw-media evidence:** after the finished GPIO17 test,
+separately dump partition `0x170000 + 0x90000` into a unique private
+backup path, use the already-installed `littlefs-python extract --block-size
+4096` to extract it read-only, then run
+`python3 audit_lowspace_partition.py <private-extracted-dir>`. This
+requires ONLY seed.txt plus the checked complete g0002.bin and g0003.bin,
+and no retired g0001.bin or disposable pad files. The checker tests finite
+synthetic payload patterns; it does NOT claim canonical EDLS/EDLG or wear
+qualification. Private extracted images and UART remain on RPI400.
